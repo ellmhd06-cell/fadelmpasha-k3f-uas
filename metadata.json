@@ -1,0 +1,6 @@
+{
+  "name": "KaryaFlow HRM",
+  "description": "Sistem Manajemen SDM Terintegrasi dengan Backoffice Web dan Employee Mobile PWA.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
