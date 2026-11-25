@@ -1,9 +1,11 @@
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
-import { clearAppCacheAndReload } from './utils/pwaRecovery';
+import { cleanupLegacyServiceWorkers, clearAppCacheAndReload } from './utils/pwaRecovery';
 
 if (typeof window !== 'undefined') {
+  void cleanupLegacyServiceWorkers();
+
   window.addEventListener('vite:preloadError', () => {
     try {
       const flag = 'karyaflow_preload_recovered';

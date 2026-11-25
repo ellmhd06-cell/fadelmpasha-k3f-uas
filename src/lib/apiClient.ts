@@ -45,7 +45,11 @@ export function hasStoredDemoToken(): boolean {
 
 async function isApiBackendReachable(): Promise<boolean> {
   try {
-    const res = await fetch('/api/health', { cache: 'no-store' });
+    const res = await fetch('/api/health', {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      redirect: 'manual',
+    });
     return res.ok;
   } catch {
     return false;
@@ -74,6 +78,8 @@ export async function apiRequest<T>(
     response = await fetch(`/api${path}`, {
       ...options,
       cache: options.cache ?? 'no-store',
+      credentials: options.credentials ?? 'same-origin',
+      redirect: 'manual',
       headers,
       signal: options.signal ?? controller.signal,
     });
@@ -84,6 +90,21 @@ export async function apiRequest<T>(
     throw new ApiError('Tidak dapat terhubung ke server. Periksa koneksi Anda.', 0, true);
   } finally {
     clearTimeout(timeoutId);
+  }
+
+  if (
+    response.type === 'opaqueredirect' ||
+    response.status === 301 ||
+    response.status === 302 ||
+    response.status === 307 ||
+    response.status === 308 ||
+    (response.redirected && !response.url.includes('/api/'))
+  ) {
+    throw new ApiError(
+      'Sesi akses halaman perlu disegarkan agar permintaan login dapat diteruskan ke server. Klik "Muat Ulang & Bersihkan Cache" lalu coba masuk kembali.',
+      401,
+      true,
+    );
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -117,8 +138,8 @@ export async function apiRequest<T>(
     if (response.status === 404 || isNotFoundProxyMessage(textFallback)) {
       const backendOk = path !== '/health' ? await isApiBackendReachable() : false;
       const recoveryMsg = backendOk
-        ? 'Rute login tidak cocok dengan cache aplikasi di browser. Klik "Muat Ulang & Bersihkan Cache" lalu coba masuk kembali.'
-        : 'Halaman atau layanan autentikasi tidak ditemukan (404). Server mungkin sedang memuat ulang atau cache aplikasi usang — klik "Muat Ulang & Bersihkan Cache" lalu coba lagi.';
+        ? 'Rute login tidak cocok dengan cache browser. Klik "Muat Ulang & Bersihkan Cache" lalu coba masuk kembali.'
+        : 'Layanan autentikasi belum merespons di rute ini (404). Jika Anda membuka Shared App URL, klik "Muat Ulang & Bersihkan Cache" atau buka lewat Pratinjau Aplikasi utama.';
       throw new ApiError(recoveryMsg, response.status, true);
     }
 

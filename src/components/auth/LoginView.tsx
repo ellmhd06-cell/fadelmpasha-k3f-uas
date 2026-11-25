@@ -81,8 +81,15 @@ const CORE_FALLBACK_ACCOUNTS: DirectoryDemoAccount[] = [
 ];
 
 export const LoginView: React.FC = () => {
-  const { signInWithDemo, authError, authNeedsCacheRecovery, submitting, viewMode, setViewMode } =
-    useAuth();
+  const {
+    signInWithDemo,
+    authError,
+    authNeedsCacheRecovery,
+    clearAuthError,
+    submitting,
+    viewMode,
+    setViewMode,
+  } = useAuth();
   const [email, setEmail] = useState(ROLE_BUTTONS[0].email);
   const [password, setPassword] = useState('demo123');
   const [employeeSearch, setEmployeeSearch] = useState('');
@@ -100,10 +107,16 @@ export const LoginView: React.FC = () => {
     try {
       const response = await fetch('/api/auth/demo-accounts', {
         cache: 'no-store',
+        credentials: 'same-origin',
+        redirect: 'manual',
         signal: controller.signal,
       });
       const contentType = response.headers.get('content-type') || '';
-      if (!response.ok || !contentType.includes('application/json')) {
+      if (
+        response.type === 'opaqueredirect' ||
+        !response.ok ||
+        !contentType.includes('application/json')
+      ) {
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
@@ -202,6 +215,7 @@ export const LoginView: React.FC = () => {
                       type="button"
                       disabled={submitting}
                       onClick={() => {
+                        clearAuthError();
                         setEmail(roleOpt.email);
                         setPassword('demo123');
                       }}
@@ -257,6 +271,7 @@ export const LoginView: React.FC = () => {
                           emp.jobTitle.toLowerCase().includes(qLower),
                       );
                       if (matches.length === 1) {
+                        clearAuthError();
                         setEmail(matches[0].email);
                         setPassword('demo123');
                       }
@@ -273,6 +288,7 @@ export const LoginView: React.FC = () => {
                 value={selectedDirectoryEmail}
                 onChange={(e) => {
                   if (e.target.value) {
+                    clearAuthError();
                     setEmail(e.target.value);
                     setPassword('demo123');
                   }
@@ -348,7 +364,10 @@ export const LoginView: React.FC = () => {
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    clearAuthError();
+                    setEmail(e.target.value);
+                  }}
                   className="w-full min-h-[44px] pl-10 pr-3.5 rounded-xl border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                 />
               </div>
@@ -368,7 +387,10 @@ export const LoginView: React.FC = () => {
                   type="password"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    clearAuthError();
+                    setPassword(e.target.value);
+                  }}
                   className="w-full min-h-[44px] pl-10 pr-3.5 rounded-xl border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                 />
               </div>

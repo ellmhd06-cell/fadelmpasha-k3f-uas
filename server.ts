@@ -13,6 +13,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
   const app = express();
+  const httpServer = createServer(app);
 
   // Required behind Cloud Run, Load Balancers, Cloudflare, or Firebase Hosting proxies
   app.set('trust proxy', 1);
@@ -32,18 +33,22 @@ async function startServer() {
   });
 
   if (!isProduction) {
-    // Prevent stale browser registrations of /sw.js from receiving HTML fallback in dev mode
-    app.get('/sw.js', (_req, res) => {
+    // Serve a self-unregistering cleanup worker on legacy SW paths in dev mode
+    app.get(['/sw.js', '/dev-sw.js'], (_req, res) => {
       res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.send(
-        `self.addEventListener('install', () => self.skipWaiting());\nself.addEventListener('activate', (event) => { event.waitUntil((async () => { const keys = await caches.keys(); await Promise.all(keys.map((k) => caches.delete(k))); await self.clients.claim(); })()); });\n`,
+        `self.addEventListener('install', () => self.skipWaiting());\nself.addEventListener('activate', (event) => { event.waitUntil((async () => { try { const keys = await caches.keys(); await Promise.all(keys.map((k) => caches.delete(k))); } catch {} try { await self.registration.unregister(); } catch {} await self.clients.claim(); })()); });\n`,
       );
     });
 
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true, allowedHosts: true },
+      server: {
+        middlewareMode: true,
+        allowedHosts: true,
+        ws: { server: httpServer, path: '/__vite_hmr' },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -101,7 +106,6 @@ async function startServer() {
     });
   }
 
-  const httpServer = createServer(app);
   initWebSocketServer(httpServer);
 
   httpServer.listen(PORT, '0.0.0.0', () => {

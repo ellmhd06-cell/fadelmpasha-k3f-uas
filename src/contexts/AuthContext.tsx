@@ -33,6 +33,7 @@ interface AuthContextValue {
   submitting: boolean;
   authError: string | null;
   authNeedsCacheRecovery: boolean;
+  clearAuthError: () => void;
   portalMode: PortalMode;
   viewMode: ViewMode;
   setPortalMode: (mode: PortalMode) => void;
@@ -171,6 +172,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [session],
   );
 
+  const clearAuthError = useCallback(() => {
+    setAuthError(null);
+    setAuthNeedsCacheRecovery(false);
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -179,6 +185,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         submitting,
         authError,
         authNeedsCacheRecovery,
+        clearAuthError,
         portalMode,
         viewMode,
         setPortalMode,

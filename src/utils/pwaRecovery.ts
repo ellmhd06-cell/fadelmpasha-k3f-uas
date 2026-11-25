@@ -1,4 +1,4 @@
-export async function clearAppCacheAndReload(): Promise<void> {
+export async function cleanupLegacyServiceWorkers(): Promise<void> {
   if (typeof window === 'undefined') return;
 
   try {
@@ -7,7 +7,7 @@ export async function clearAppCacheAndReload(): Promise<void> {
       await Promise.all(registrations.map((reg) => reg.unregister()));
     }
   } catch {
-    // Ignore SW unregister errors in restricted browser contexts
+    // Ignore SW unregister errors in restricted iframe or private contexts
   }
 
   try {
@@ -18,6 +18,12 @@ export async function clearAppCacheAndReload(): Promise<void> {
   } catch {
     // Ignore CacheStorage cleanup errors
   }
+}
+
+export async function clearAppCacheAndReload(): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  await cleanupLegacyServiceWorkers();
 
   try {
     window.sessionStorage.removeItem('karyaflow_demo_session_token');
@@ -26,9 +32,9 @@ export async function clearAppCacheAndReload(): Promise<void> {
   }
 
   try {
-    window.location.assign('/');
-  } catch {
     window.location.reload();
+  } catch {
+    window.location.assign('/');
   }
 }
 

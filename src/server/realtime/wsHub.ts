@@ -14,7 +14,21 @@ let wss: WebSocketServer | null = null;
 export function initWebSocketServer(server: HttpServer) {
   if (wss) return wss;
 
-  wss = new WebSocketServer({ server, path: '/ws' });
+  wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    try {
+      const requestUrl = new URL(req.url || '/', 'http://localhost');
+      if (requestUrl.pathname !== '/ws') {
+        return;
+      }
+      wss?.handleUpgrade(req, socket, head, (ws) => {
+        wss?.emit('connection', ws, req);
+      });
+    } catch {
+      socket.destroy();
+    }
+  });
 
   wss.on('connection', async (socket: AuthenticatedSocket, req) => {
     try {
