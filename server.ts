@@ -19,12 +19,28 @@ async function startServer() {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
 
-  app.use('/api', apiRouter);
+  app.use(
+    '/api',
+    (_req, res, next) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      next();
+    },
+    apiRouter,
+  );
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Endpoint API tidak ditemukan.' });
   });
 
   if (!isProduction) {
+    // Prevent stale browser registrations of /sw.js from receiving HTML fallback in dev mode
+    app.get('/sw.js', (_req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.send(
+        `self.addEventListener('install', () => self.skipWaiting());\nself.addEventListener('activate', (event) => { event.waitUntil((async () => { const keys = await caches.keys(); await Promise.all(keys.map((k) => caches.delete(k))); await self.clients.claim(); })()); });\n`,
+      );
+    });
+
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, allowedHosts: true },
@@ -42,7 +58,12 @@ async function startServer() {
     app.use(
       express.static(distDir, {
         setHeaders: (res, filePath) => {
-          if (filePath.endsWith('index.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.webmanifest')) {
+          if (
+            filePath.endsWith('index.html') ||
+            filePath.endsWith('sw.js') ||
+            filePath.endsWith('registerSW.js') ||
+            filePath.endsWith('manifest.webmanifest')
+          ) {
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
           } else {
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
@@ -51,7 +72,30 @@ async function startServer() {
       }),
     );
 
-    app.get('*', (_req, res) => {
+    const STATIC_EXT_PATTERN =
+      /\.(js|mjs|css|map|png|jpg|jpeg|gif|webp|svg|ico|woff|woff2|ttf|json|webmanifest|txt)$/i;
+
+    app.get('*', (req, res) => {
+      if (
+        req.path.startsWith('/api/') ||
+        req.path === '/api' ||
+        req.path.startsWith('/assets/') ||
+        req.path.startsWith('/src/') ||
+        req.path.startsWith('/__') ||
+        req.path.startsWith('/_aistudio') ||
+        STATIC_EXT_PATTERN.test(req.path)
+      ) {
+        if (req.path.startsWith('/api')) {
+          res.status(404).json({ error: 'Endpoint API tidak ditemukan.' });
+          return;
+        }
+        res.status(404).type('text/plain').send('Resource tidak ditemukan.');
+        return;
+      }
+      if (!fs.existsSync(indexHtmlPath)) {
+        res.status(503).type('text/plain').send('Aplikasi sedang disiapkan. Jalankan build terlebih dahulu.');
+        return;
+      }
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.sendFile(indexHtmlPath);
     });

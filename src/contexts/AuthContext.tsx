@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { signOut as firebaseSignOut } from 'firebase/auth';
 import {
+  ApiError,
   apiRequest,
   hasStoredDemoToken,
   setActiveDemoToken,
@@ -31,6 +32,7 @@ interface AuthContextValue {
   loading: boolean;
   submitting: boolean;
   authError: string | null;
+  authNeedsCacheRecovery: boolean;
   portalMode: PortalMode;
   viewMode: ViewMode;
   setPortalMode: (mode: PortalMode) => void;
@@ -48,6 +50,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authNeedsCacheRecovery, setAuthNeedsCacheRecovery] = useState(false);
   const [viewMode, setViewModeState] = useState<ViewMode>(getInitialViewMode);
   const [portalMode, setPortalModeState] = useState<PortalMode>('employee');
 
@@ -62,6 +65,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchBackendSession = useCallback(async () => {
     try {
       setAuthError(null);
+      setAuthNeedsCacheRecovery(false);
       const data = await apiRequest<AuthSessionResponse>('/me');
       setSession(data);
       setPortalModeState(resolvePortalForSession(data, getInitialViewMode()));
@@ -69,6 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveDemoToken(null);
       const msg = err instanceof Error ? err.message : 'Sesi berakhir. Silakan masuk kembali.';
       setAuthError(msg);
+      setAuthNeedsCacheRecovery(err instanceof ApiError && err.isRoutingOrCacheError);
       setSession(null);
     }
   }, [resolvePortalForSession]);
@@ -102,6 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async (email: string, password: string) => {
       try {
         setAuthError(null);
+        setAuthNeedsCacheRecovery(false);
         setSubmitting(true);
         const res = await apiRequest<{ token: string; session: AuthSessionResponse }>(
           '/auth/demo-login',
@@ -118,6 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const message =
           err instanceof Error ? err.message : 'Gagal masuk dengan akun demo.';
         setAuthError(message);
+        setAuthNeedsCacheRecovery(err instanceof ApiError && err.isRoutingOrCacheError);
       } finally {
         setSubmitting(false);
       }
@@ -136,6 +143,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = useCallback(async () => {
     setAuthError(null);
+    setAuthNeedsCacheRecovery(false);
     setActiveDemoToken(null);
     try {
       await firebaseSignOut(auth);
@@ -170,6 +178,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         submitting,
         authError,
+        authNeedsCacheRecovery,
         portalMode,
         viewMode,
         setPortalMode,

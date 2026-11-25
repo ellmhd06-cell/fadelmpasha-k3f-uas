@@ -46,11 +46,25 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
+          navigateFallback: 'index.html',
+          navigateFallbackDenylist: [
+            /^\/api\//,
+            /^\/ws/,
+            /^\/__/,
+            /^\/_aistudio/,
+            /^\/warmup\.html$/,
+            /^\/forbidden\.html$/,
+            /^\/src\//,
+            /^\/assets\//,
+          ],
           skipWaiting: true,
           clientsClaim: true,
           cleanupOutdatedCaches: true,
           runtimeCaching: [
+            {
+              urlPattern: /\/api\/.*/i,
+              handler: 'NetworkOnly',
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
@@ -82,8 +96,9 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: false,
+          enabled: true,
           type: 'module',
+          navigateFallback: 'index.html',
         },
       }),
       // Copies src/assets into dist/ so root-relative URLs like

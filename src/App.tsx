@@ -3,6 +3,7 @@ import { LoginView } from './components/auth/LoginView';
 import { BackofficePortal } from './components/backoffice/BackofficePortal';
 import { EmployeePortal } from './components/employee/EmployeePortal';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator';
+import { AppErrorBoundary } from './components/common/AppErrorBoundary';
 
 function AppRouter() {
   const { session, loading, portalMode, viewMode } = useAuth();
@@ -34,9 +35,11 @@ function AppRouter() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppRouter />
-      <OfflineIndicator />
-    </AuthProvider>
+    <AppErrorBoundary>
+      <AuthProvider>
+        <AppRouter />
+        <OfflineIndicator />
+      </AuthProvider>
+    </AppErrorBoundary>
   );
 }

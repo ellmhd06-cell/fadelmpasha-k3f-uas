@@ -4,6 +4,7 @@ import loginOfficeHero from '../../assets/images/login_office_architecture_17949
 import { useAuth } from '../../contexts/AuthContext';
 import type { EmploymentStatus, UserRole } from '../../shared/types';
 import { getRoleLabel } from '../../utils/formatters';
+import { clearAppCacheAndReload } from '../../utils/pwaRecovery';
 import { Avatar } from '../common/Avatar';
 import { ViewModeToggle } from '../common/ViewModeToggle';
 import { PWAInstallButton } from '../pwa/PWAInstallButton';
@@ -80,7 +81,8 @@ const CORE_FALLBACK_ACCOUNTS: DirectoryDemoAccount[] = [
 ];
 
 export const LoginView: React.FC = () => {
-  const { signInWithDemo, authError, submitting, viewMode, setViewMode } = useAuth();
+  const { signInWithDemo, authError, authNeedsCacheRecovery, submitting, viewMode, setViewMode } =
+    useAuth();
   const [email, setEmail] = useState(ROLE_BUTTONS[0].email);
   const [password, setPassword] = useState('demo123');
   const [employeeSearch, setEmployeeSearch] = useState('');
@@ -97,9 +99,11 @@ export const LoginView: React.FC = () => {
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
       const response = await fetch('/api/auth/demo-accounts', {
+        cache: 'no-store',
         signal: controller.signal,
       });
-      if (!response.ok) {
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok || !contentType.includes('application/json')) {
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
@@ -315,9 +319,21 @@ export const LoginView: React.FC = () => {
             {authError && (
               <div
                 role="alert"
-                className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-800"
+                className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-800 space-y-2.5"
               >
-                {authError}
+                <p>{authError}</p>
+                {authNeedsCacheRecovery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void clearAppCacheAndReload();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-100/60 transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                    <span>Muat Ulang & Bersihkan Cache</span>
+                  </button>
+                )}
               </div>
             )}
 

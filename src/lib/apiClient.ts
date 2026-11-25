@@ -1,39 +1,31 @@
 import { auth } from './firebase';
+import { isNotFoundProxyMessage } from '../utils/pwaRecovery';
 
-const DEMO_TOKEN_KEY = 'karyaflow_demo_session_token';
+const LEGACY_DEMO_TOKEN_KEY = 'karyaflow_demo_session_token';
 
-function readStoredDemoToken(): string | null {
-  if (typeof window === 'undefined') return null;
+// Clear any legacy sessionStorage token so auth tokens remain strictly in memory
+if (typeof window !== 'undefined') {
   try {
-    return window.sessionStorage.getItem(DEMO_TOKEN_KEY);
+    window.sessionStorage.removeItem(LEGACY_DEMO_TOKEN_KEY);
   } catch {
-    return null;
+    // Ignore Storage / SecurityError in strict iframe or privacy contexts
   }
 }
 
-let inMemoryDemoToken: string | null = readStoredDemoToken();
+let inMemoryDemoToken: string | null = null;
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  isRoutingOrCacheError: boolean;
+  constructor(message: string, status: number, isRoutingOrCacheError = false) {
     super(message);
     this.status = status;
+    this.isRoutingOrCacheError = isRoutingOrCacheError;
   }
 }
 
 export function setActiveDemoToken(token: string | null) {
   inMemoryDemoToken = token;
-  if (typeof window !== 'undefined') {
-    try {
-      if (token) {
-        window.sessionStorage.setItem(DEMO_TOKEN_KEY, token);
-      } else {
-        window.sessionStorage.removeItem(DEMO_TOKEN_KEY);
-      }
-    } catch {
-      // Ignore Storage / SecurityError in strict iframe or privacy contexts
-    }
-  }
 }
 
 export async function getActiveAuthToken(): Promise<string> {
@@ -49,6 +41,15 @@ export async function getActiveAuthToken(): Promise<string> {
 
 export function hasStoredDemoToken(): boolean {
   return !!inMemoryDemoToken;
+}
+
+async function isApiBackendReachable(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function apiRequest<T>(
@@ -72,6 +73,7 @@ export async function apiRequest<T>(
   try {
     response = await fetch(`/api${path}`, {
       ...options,
+      cache: options.cache ?? 'no-store',
       headers,
       signal: options.signal ?? controller.signal,
     });
@@ -79,7 +81,7 @@ export async function apiRequest<T>(
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw new ApiError('Waktu koneksi ke server habis. Silakan coba lagi.', 408);
     }
-    throw new ApiError('Tidak dapat terhubung ke server. Periksa koneksi Anda.', 0);
+    throw new ApiError('Tidak dapat terhubung ke server. Periksa koneksi Anda.', 0, true);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -102,18 +104,37 @@ export async function apiRequest<T>(
     if (jsonErr) {
       throw new ApiError(jsonErr, response.status);
     }
+
     let textFallback = '';
     try {
       if (!contentType.includes('application/json')) {
-        textFallback = (await response.text()).slice(0, 140).trim();
+        textFallback = (await response.text()).slice(0, 180).trim();
       }
     } catch {
       textFallback = '';
     }
+
+    if (response.status === 404 || isNotFoundProxyMessage(textFallback)) {
+      const backendOk = path !== '/health' ? await isApiBackendReachable() : false;
+      const recoveryMsg = backendOk
+        ? 'Rute login tidak cocok dengan cache aplikasi di browser. Klik "Muat Ulang & Bersihkan Cache" lalu coba masuk kembali.'
+        : 'Halaman atau layanan autentikasi tidak ditemukan (404). Server mungkin sedang memuat ulang atau cache aplikasi usang — klik "Muat Ulang & Bersihkan Cache" lalu coba lagi.';
+      throw new ApiError(recoveryMsg, response.status, true);
+    }
+
     const cleanText = textFallback && !textFallback.startsWith('<') ? textFallback : '';
     throw new ApiError(
       cleanText || `Permintaan gagal dengan status ${response.status}.`,
       response.status,
+      response.status >= 502,
+    );
+  }
+
+  if (!contentType.includes('application/json') && path !== '/health') {
+    throw new ApiError(
+      'Server mengembalikan respons yang tidak sesuai (kemungkinan cache usang). Klik "Muat Ulang & Bersihkan Cache".',
+      502,
+      true,
     );
   }
 
