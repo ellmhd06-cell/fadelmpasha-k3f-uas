@@ -4,8 +4,8 @@ import fs from 'fs';
 import { createServer } from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { configureBaseMiddleware } from './src/server/app.ts';
 import { initWebSocketServer } from './src/server/realtime/wsHub.ts';
-import { apiRouter } from './src/server/routes/apiRouter.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -15,55 +15,7 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
 
-  // Required behind Cloud Run, Load Balancers, Cloudflare, or Firebase Hosting proxies
-  app.set('trust proxy', 1);
-  app.disable('x-powered-by');
-  app.use(express.json({ limit: '1mb' }));
-
-  app.use(
-    '/api',
-    (_req, res, next) => {
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      next();
-    },
-    apiRouter,
-  );
-  app.use('/api', (_req, res) => {
-    res.status(404).json({ error: 'Endpoint API tidak ditemukan.' });
-  });
-
-  const CLEANUP_SW_SCRIPT = [
-    `self.addEventListener('install', () => self.skipWaiting());`,
-    `self.addEventListener('activate', (event) => {`,
-    `  event.waitUntil((async () => {`,
-    `    try {`,
-    `      const keys = await caches.keys();`,
-    `      await Promise.all(keys.map((k) => caches.delete(k)));`,
-    `    } catch {}`,
-    `    try {`,
-    `      await self.registration.unregister();`,
-    `    } catch {}`,
-    `    try {`,
-    `      await self.clients.claim();`,
-    `    } catch {}`,
-    `  })());`,
-    `});`,
-    ``,
-  ].join('\n');
-
-  const NOOP_REGISTER_SW_SCRIPT = `/* Service Worker disabled; legacy registrations cleaned automatically */\n`;
-
-  app.get(['/sw.js', '/dev-sw.js'], (_req, res) => {
-    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.send(CLEANUP_SW_SCRIPT);
-  });
-
-  app.get('/registerSW.js', (_req, res) => {
-    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.send(NOOP_REGISTER_SW_SCRIPT);
-  });
+  configureBaseMiddleware(app);
 
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');

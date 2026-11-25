@@ -252,10 +252,20 @@ function buildPermissions(role: string) {
 
 export const apiRouter = Router();
 
+apiRouter.get('/', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'KaryaFlow HRM API',
+    realtimeSupported: !process.env.VERCEL,
+  });
+});
+
 apiRouter.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     env: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+    platform: process.env.VERCEL ? 'vercel' : 'node',
+    realtimeSupported: !process.env.VERCEL,
   });
 });
 

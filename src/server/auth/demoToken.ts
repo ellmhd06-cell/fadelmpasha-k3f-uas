@@ -1,9 +1,13 @@
 import crypto from 'crypto';
 
 const EPHEMERAL_FALLBACK_SECRET = crypto.randomBytes(32).toString('hex');
+const DETERMINISTIC_DB_FALLBACK = process.env.DATABASE_URL
+  ? crypto.createHash('sha256').update(`karyaflow:${process.env.DATABASE_URL}`).digest('hex')
+  : '';
 const DEMO_SECRET =
   process.env.DEMO_AUTH_SECRET ||
   process.env.SQL_PASSWORD ||
+  DETERMINISTIC_DB_FALLBACK ||
   EPHEMERAL_FALLBACK_SECRET;
 
 export interface DemoTokenPayload {

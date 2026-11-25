@@ -53,8 +53,251 @@ export async function ensureSeeded(): Promise<void> {
   return seedPromise;
 }
 
+async function ensureDatabaseSchema(): Promise<void> {
+  try {
+    const existing = await db.execute(sql`SELECT to_regclass('public.departments') AS reg`);
+    const rows = (existing as unknown as { rows?: Array<{ reg?: string | null }> }).rows;
+    if (rows?.[0]?.reg) {
+      return;
+    }
+  } catch {
+    // Proceed to check/create if to_regclass check fails
+  }
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS departments (
+      id SERIAL PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL UNIQUE,
+      division TEXT NOT NULL DEFAULT 'Operasional Korporat',
+      description TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS office_locations (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      address TEXT NOT NULL,
+      latitude DOUBLE PRECISION NOT NULL,
+      longitude DOUBLE PRECISION NOT NULL,
+      radius_meters INTEGER NOT NULL DEFAULT 250,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS work_shifts (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      start_time TEXT NOT NULL,
+      end_time TEXT NOT NULL,
+      grace_period_minutes INTEGER NOT NULL DEFAULT 15,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      uid TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '',
+      photo_url TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT 'employee',
+      last_login_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS employees (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      employee_code TEXT NOT NULL UNIQUE,
+      full_name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      phone TEXT NOT NULL DEFAULT '',
+      identity_number TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      job_title TEXT NOT NULL,
+      division_name TEXT NOT NULL DEFAULT '',
+      employment_status TEXT NOT NULL DEFAULT 'active',
+      join_date TEXT NOT NULL,
+      avatar_url TEXT NOT NULL DEFAULT '',
+      gender TEXT NOT NULL DEFAULT 'male',
+      role TEXT NOT NULL DEFAULT 'employee',
+      department_id INTEGER REFERENCES departments(id),
+      manager_id INTEGER,
+      shift_id INTEGER REFERENCES work_shifts(id),
+      office_location_id INTEGER REFERENCES office_locations(id),
+      base_salary INTEGER NOT NULL DEFAULT 8000000,
+      default_allowance INTEGER NOT NULL DEFAULT 1500000,
+      employment_history TEXT NOT NULL DEFAULT '[]',
+      documents_json TEXT NOT NULL DEFAULT '[]',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS attendance_logs (
+      id SERIAL PRIMARY KEY,
+      employee_id INTEGER NOT NULL REFERENCES employees(id),
+      work_date TEXT NOT NULL,
+      clock_in_at TIMESTAMP NOT NULL,
+      clock_out_at TIMESTAMP,
+      clock_in_lat DOUBLE PRECISION,
+      clock_in_lng DOUBLE PRECISION,
+      clock_out_lat DOUBLE PRECISION,
+      clock_out_lng DOUBLE PRECISION,
+      clock_in_distance_meters INTEGER,
+      is_within_geofence BOOLEAN NOT NULL DEFAULT TRUE,
+      status TEXT NOT NULL DEFAULT 'on_time',
+      work_minutes INTEGER NOT NULL DEFAULT 0,
+      overtime_minutes INTEGER NOT NULL DEFAULT 0,
+      early_leave_minutes INTEGER NOT NULL DEFAULT 0,
+      clock_in_photo_url TEXT NOT NULL DEFAULT '',
+      clock_out_photo_url TEXT NOT NULL DEFAULT '',
+      clock_in_reason TEXT NOT NULL DEFAULT '',
+      clock_out_reason TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS attendance_employee_date_idx
+    ON attendance_logs (employee_id, work_date)
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS overtime_requests (
+      id SERIAL PRIMARY KEY,
+      employee_id INTEGER NOT NULL REFERENCES employees(id),
+      work_date TEXT NOT NULL,
+      hours DOUBLE PRECISION NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending_supervisor',
+      reviewed_by_employee_id INTEGER,
+      review_note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS leave_types (
+      id SERIAL PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      default_quota_days INTEGER NOT NULL DEFAULT 12,
+      is_paid BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS leave_balances (
+      id SERIAL PRIMARY KEY,
+      employee_id INTEGER NOT NULL REFERENCES employees(id),
+      leave_type_id INTEGER NOT NULL REFERENCES leave_types(id),
+      year INTEGER NOT NULL,
+      allocated_days INTEGER NOT NULL,
+      used_days INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS leave_balance_emp_type_year_idx
+    ON leave_balances (employee_id, leave_type_id, year)
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS leave_requests (
+      id SERIAL PRIMARY KEY,
+      employee_id INTEGER NOT NULL REFERENCES employees(id),
+      leave_type_id INTEGER NOT NULL REFERENCES leave_types(id),
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      total_days INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending_supervisor',
+      supervisor_reviewed_by_id INTEGER,
+      supervisor_reviewed_at TIMESTAMP,
+      supervisor_note TEXT NOT NULL DEFAULT '',
+      reviewed_by_employee_id INTEGER,
+      reviewed_at TIMESTAMP,
+      review_note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS payroll_records (
+      id SERIAL PRIMARY KEY,
+      employee_id INTEGER NOT NULL REFERENCES employees(id),
+      period_month TEXT NOT NULL,
+      base_salary INTEGER NOT NULL,
+      allowances INTEGER NOT NULL,
+      overtime_pay INTEGER NOT NULL DEFAULT 0,
+      deductions INTEGER NOT NULL DEFAULT 0,
+      net_salary INTEGER NOT NULL,
+      attendance_days INTEGER NOT NULL DEFAULT 0,
+      late_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'draft',
+      published_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS payroll_employee_period_idx
+    ON payroll_records (employee_id, period_month)
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS performance_reviews (
+      id SERIAL PRIMARY KEY,
+      employee_id INTEGER NOT NULL REFERENCES employees(id),
+      reviewer_employee_id INTEGER NOT NULL,
+      period_label TEXT NOT NULL,
+      kpi_items_json TEXT NOT NULL DEFAULT '[]',
+      overall_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+      rating_label TEXT NOT NULL DEFAULT 'Baik',
+      supervisor_notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'finalized',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS announcements (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'company',
+      content TEXT NOT NULL,
+      author_employee_id INTEGER NOT NULL,
+      is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY,
+      recipient_employee_id INTEGER,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'info',
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id SERIAL PRIMARY KEY,
+      actor_user_id INTEGER REFERENCES users(id),
+      actor_email TEXT NOT NULL,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
 async function runSeed(): Promise<void> {
   try {
+    await ensureDatabaseSchema();
+
     // 1. Departments & Divisions
     await db
       .insert(departments)
