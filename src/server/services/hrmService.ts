@@ -36,7 +36,17 @@ import type {
   PerformanceReviewRecord,
   UserRole,
 } from '../../shared/types.ts';
-import { getJakartaDateString, getJakartaMonthString } from './seedService.ts';
+import {
+  detectGenderFromName,
+  doesAvatarMatchGender,
+  isBuiltInAvatarUrl,
+  pickGenderAvatarUrl,
+  type EmployeeGender,
+} from '../../shared/genderAvatars.ts';
+import {
+  getJakartaDateString,
+  getJakartaMonthString,
+} from './seedService.ts';
 
 function calculateDistanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -159,6 +169,7 @@ export async function listEmployees(): Promise<EmployeeRecord[]> {
         employmentStatus: emp.employmentStatus as EmploymentStatus,
         joinDate: emp.joinDate,
         avatarUrl: emp.avatarUrl,
+        gender: (emp.gender === 'female' ? 'female' : 'male') as EmployeeGender,
         role: emp.role as UserRole,
         departmentId: emp.departmentId,
         departmentName: dept?.name ?? null,
@@ -197,6 +208,7 @@ export async function createEmployeeRecord(
     divisionName: string;
     employmentStatus: EmploymentStatus;
     joinDate: string;
+    gender?: EmployeeGender;
     role: UserRole;
     departmentId: number | null;
     managerId: number | null;
@@ -208,13 +220,20 @@ export async function createEmployeeRecord(
   actor: { userId: number; email: string },
 ): Promise<EmployeeRecord> {
   try {
+    const normalizedEmail = input.email.trim().toLowerCase();
     const existing = await db
       .select()
       .from(employees)
-      .where(eq(employees.email, input.email));
+      .where(sql`lower(${employees.email}) = ${normalizedEmail}`);
     if (existing.length > 0) {
       throw new Error('VALIDATION:Email karyawan sudah terdaftar di sistem.');
     }
+
+    const resolvedGender: EmployeeGender = input.gender ?? detectGenderFromName(input.fullName);
+    const resolvedAvatarUrl = pickGenderAvatarUrl(
+      resolvedGender,
+      input.employeeCode.trim() || normalizedEmail,
+    );
 
     const initialHistory: EmploymentHistoryItem[] = [
       {
@@ -228,9 +247,9 @@ export async function createEmployeeRecord(
     const [created] = await db
       .insert(employees)
       .values({
-        employeeCode: input.employeeCode,
-        fullName: input.fullName,
-        email: input.email,
+        employeeCode: input.employeeCode.trim(),
+        fullName: input.fullName.trim(),
+        email: normalizedEmail,
         phone: input.phone,
         identityNumber: input.identityNumber,
         address: input.address,
@@ -238,6 +257,8 @@ export async function createEmployeeRecord(
         divisionName: input.divisionName,
         employmentStatus: input.employmentStatus,
         joinDate: input.joinDate,
+        avatarUrl: resolvedAvatarUrl,
+        gender: resolvedGender,
         role: input.role,
         departmentId: input.departmentId,
         managerId: input.managerId,
@@ -298,6 +319,7 @@ export async function updateEmployeeRecord(
     jobTitle: string;
     divisionName: string;
     employmentStatus: EmploymentStatus;
+    gender: EmployeeGender;
     role: UserRole;
     departmentId: number | null;
     managerId: number | null;
@@ -315,6 +337,11 @@ export async function updateEmployeeRecord(
       throw new Error('FORBIDDEN:Hanya HR Admin atau Manajemen yang dapat mengubah peran pengguna.');
     }
 
+    const [existingEmp] = await db.select().from(employees).where(eq(employees.id, id));
+    if (!existingEmp) {
+      throw new Error('NOT_FOUND:Data karyawan tidak ditemukan.');
+    }
+
     const { employmentHistory, documents, ...rest } = input;
     const patchPayload: Record<string, unknown> = {
       ...rest,
@@ -327,6 +354,21 @@ export async function updateEmployeeRecord(
       patchPayload.documentsJson = JSON.stringify(documents);
     }
 
+    const nextGender: EmployeeGender =
+      input.gender ??
+      (existingEmp.gender === 'female' ? 'female' : 'male');
+
+    if (
+      !existingEmp.avatarUrl ||
+      (isBuiltInAvatarUrl(existingEmp.avatarUrl) &&
+        !doesAvatarMatchGender(existingEmp.avatarUrl, nextGender))
+    ) {
+      patchPayload.avatarUrl = pickGenderAvatarUrl(
+        nextGender,
+        existingEmp.employeeCode || existingEmp.email,
+      );
+    }
+
     const [updated] = await db
       .update(employees)
       .set(patchPayload)
@@ -337,8 +379,14 @@ export async function updateEmployeeRecord(
       throw new Error('NOT_FOUND:Data karyawan tidak ditemukan.');
     }
 
-    if (input.role && updated.userId) {
-      await db.update(users).set({ role: input.role }).where(eq(users.id, updated.userId));
+    if (updated.userId) {
+      const userPatch: { role?: string; photoUrl?: string; displayName?: string } = {};
+      if (input.role) userPatch.role = input.role;
+      if (typeof patchPayload.avatarUrl === 'string') userPatch.photoUrl = patchPayload.avatarUrl;
+      if (input.fullName) userPatch.displayName = updated.fullName;
+      if (Object.keys(userPatch).length > 0) {
+        await db.update(users).set(userPatch).where(eq(users.id, updated.userId));
+      }
     }
 
     await recordAuditLog({
@@ -362,6 +410,81 @@ export async function updateEmployeeRecord(
     }
     console.error('Failed to update employee:', error);
     throw new Error('Gagal memperbarui data karyawan.', { cause: error });
+  }
+}
+
+export async function updateOwnProfileName(params: {
+  userId: number;
+  employeeId: number;
+  actorEmail: string;
+  fullName: string;
+}): Promise<EmployeeRecord> {
+  try {
+    const trimmedName = params.fullName.trim();
+    if (trimmedName.length < 2 || trimmedName.length > 120) {
+      throw new Error('VALIDATION:Nama lengkap harus antara 2 hingga 120 karakter.');
+    }
+
+    const [existingEmp] = await db
+      .select()
+      .from(employees)
+      .where(eq(employees.id, params.employeeId));
+    if (!existingEmp) {
+      throw new Error('NOT_FOUND:Profil karyawan Anda tidak ditemukan.');
+    }
+
+    const detectedGender = detectGenderFromName(trimmedName);
+    const shouldUpdateAvatar =
+      !existingEmp.avatarUrl ||
+      (isBuiltInAvatarUrl(existingEmp.avatarUrl) &&
+        !doesAvatarMatchGender(existingEmp.avatarUrl, detectedGender));
+    const nextAvatarUrl = shouldUpdateAvatar
+      ? pickGenderAvatarUrl(detectedGender, existingEmp.employeeCode || existingEmp.email)
+      : existingEmp.avatarUrl;
+
+    const [updatedEmp] = await db
+      .update(employees)
+      .set({
+        fullName: trimmedName,
+        gender: shouldUpdateAvatar ? detectedGender : existingEmp.gender,
+        avatarUrl: nextAvatarUrl,
+        updatedAt: new Date(),
+      })
+      .where(eq(employees.id, params.employeeId))
+      .returning();
+
+    if (!updatedEmp) {
+      throw new Error('NOT_FOUND:Profil karyawan Anda tidak ditemukan.');
+    }
+
+    await db
+      .update(users)
+      .set({ displayName: trimmedName, photoUrl: nextAvatarUrl })
+      .where(eq(users.id, params.userId));
+
+    await recordAuditLog({
+      actorUserId: params.userId,
+      actorEmail: params.actorEmail,
+      action: 'UPDATE_OWN_NAME',
+      entityType: 'employee',
+      entityId: String(params.employeeId),
+      summary: `Pengguna memperbarui nama akunnya sendiri menjadi "${trimmedName}"`,
+    });
+
+    const record = await getEmployeeById(params.employeeId);
+    if (!record) {
+      throw new Error('NOT_FOUND:Profil karyawan tidak ditemukan setelah diperbarui.');
+    }
+    return record;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.startsWith('VALIDATION:') || error.message.startsWith('NOT_FOUND:'))
+    ) {
+      throw error;
+    }
+    console.error('Failed to update own profile name:', error);
+    throw new Error('Gagal memperbarui nama akun.', { cause: error });
   }
 }
 
@@ -473,6 +596,10 @@ export async function listAttendanceRecords(params: {
 
     return rows.map((row) => {
       const emp = empMap.get(row.employeeId);
+      const marker = ' · Pulang: ';
+      const markerIdx = row.notes.indexOf(marker);
+      const fallbackIn = markerIdx >= 0 ? row.notes.slice(0, markerIdx).trim() : row.notes.trim();
+      const fallbackOut = markerIdx >= 0 ? row.notes.slice(markerIdx + marker.length).trim() : '';
       return {
         id: row.id,
         employeeId: row.employeeId,
@@ -494,6 +621,9 @@ export async function listAttendanceRecords(params: {
         overtimeMinutes: row.overtimeMinutes,
         earlyLeaveMinutes: row.earlyLeaveMinutes,
         clockInPhotoUrl: row.clockInPhotoUrl,
+        clockOutPhotoUrl: row.clockOutPhotoUrl,
+        clockInReason: row.clockInReason || fallbackIn,
+        clockOutReason: row.clockOutReason || fallbackOut,
         notes: row.notes,
       };
     });
@@ -507,10 +637,19 @@ export async function clockInEmployee(params: {
   employeeId: number;
   latitude: number | null;
   longitude: number | null;
-  clockInPhotoUrl?: string;
-  notes: string;
+  clockInPhotoUrl: string;
+  clockInReason?: string;
+  notes?: string;
 }): Promise<AttendanceRecord> {
   try {
+    if (!params.clockInPhotoUrl || !params.clockInPhotoUrl.startsWith('data:image/')) {
+      throw new Error('VALIDATION:Foto selfie CLOCK IN wajib diambil sebelum mencatat presensi masuk.');
+    }
+    const reason = (params.clockInReason || params.notes || '').trim();
+    if (reason.length < 3) {
+      throw new Error('VALIDATION:Alasan atau catatan presensi CLOCK IN wajib diisi minimal 3 karakter.');
+    }
+
     const today = getJakartaDateString();
     const existing = await db
       .select()
@@ -571,8 +710,11 @@ export async function clockInEmployee(params: {
         workMinutes: 0,
         overtimeMinutes: 0,
         earlyLeaveMinutes: 0,
-        clockInPhotoUrl: params.clockInPhotoUrl || '',
-        notes: params.notes,
+        clockInPhotoUrl: params.clockInPhotoUrl,
+        clockOutPhotoUrl: '',
+        clockInReason: reason,
+        clockOutReason: '',
+        notes: reason,
       })
       .returning();
 
@@ -597,6 +739,9 @@ export async function clockInEmployee(params: {
       overtimeMinutes: created.overtimeMinutes,
       earlyLeaveMinutes: created.earlyLeaveMinutes,
       clockInPhotoUrl: created.clockInPhotoUrl,
+      clockOutPhotoUrl: created.clockOutPhotoUrl,
+      clockInReason: created.clockInReason,
+      clockOutReason: created.clockOutReason,
       notes: created.notes,
     };
   } catch (error) {
@@ -615,9 +760,19 @@ export async function clockOutEmployee(params: {
   employeeId: number;
   latitude: number | null;
   longitude: number | null;
+  clockOutPhotoUrl: string;
+  clockOutReason?: string;
   notes?: string;
 }): Promise<AttendanceRecord> {
   try {
+    if (!params.clockOutPhotoUrl || !params.clockOutPhotoUrl.startsWith('data:image/')) {
+      throw new Error('VALIDATION:Foto selfie CLOCK OUT wajib diambil sebelum mencatat presensi pulang.');
+    }
+    const reason = (params.clockOutReason || params.notes || '').trim();
+    if (reason.length < 3) {
+      throw new Error('VALIDATION:Alasan atau catatan presensi CLOCK OUT wajib diisi minimal 3 karakter.');
+    }
+
     const today = getJakartaDateString();
     const existing = await db
       .select()
@@ -643,11 +798,8 @@ export async function clockOutEmployee(params: {
     const nextStatus =
       log.status === 'on_time' && earlyLeaveMinutes > 0 ? 'early_leave' : log.status;
 
-    const mergedNotes = params.notes
-      ? log.notes
-        ? `${log.notes} · Pulang: ${params.notes}`
-        : params.notes
-      : log.notes;
+    const baseInReason = log.clockInReason || log.notes;
+    const mergedNotes = baseInReason ? `${baseInReason} · Pulang: ${reason}` : reason;
 
     const [updated] = await db
       .update(attendanceLogs)
@@ -655,6 +807,9 @@ export async function clockOutEmployee(params: {
         clockOutAt: serverNow,
         clockOutLat: params.latitude,
         clockOutLng: params.longitude,
+        clockOutPhotoUrl: params.clockOutPhotoUrl,
+        clockInReason: baseInReason,
+        clockOutReason: reason,
         workMinutes,
         earlyLeaveMinutes,
         overtimeMinutes,
@@ -685,6 +840,9 @@ export async function clockOutEmployee(params: {
       overtimeMinutes: updated.overtimeMinutes,
       earlyLeaveMinutes: updated.earlyLeaveMinutes,
       clockInPhotoUrl: updated.clockInPhotoUrl,
+      clockOutPhotoUrl: updated.clockOutPhotoUrl,
+      clockInReason: updated.clockInReason,
+      clockOutReason: updated.clockOutReason,
       notes: updated.notes,
     };
   } catch (error) {
@@ -752,6 +910,11 @@ export async function submitOvertimeRequest(params: {
   reason: string;
 }): Promise<OvertimeRequestRecord> {
   try {
+    const trimmedReason = params.reason.trim();
+    if (trimmedReason.length < 5) {
+      throw new Error('VALIDATION:Alasan atau catatan pengajuan lembur wajib diisi minimal 5 karakter.');
+    }
+
     const emp = await getEmployeeById(params.employeeId);
     const initialStatus = emp?.managerId ? 'pending_supervisor' : 'pending_hr';
     const [created] = await db
@@ -760,7 +923,7 @@ export async function submitOvertimeRequest(params: {
         employeeId: params.employeeId,
         workDate: params.workDate,
         hours: params.hours,
-        reason: params.reason,
+        reason: trimmedReason,
         status: initialStatus,
       })
       .returning();
@@ -788,6 +951,9 @@ export async function submitOvertimeRequest(params: {
       createdAt: created.createdAt.toISOString(),
     };
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith('VALIDATION:')) {
+      throw error;
+    }
     console.error('Failed to submit overtime:', error);
     throw new Error('Gagal mengajukan lembur.', { cause: error });
   }
@@ -984,6 +1150,12 @@ export async function submitLeaveRequest(params: {
   reason: string;
 }): Promise<LeaveRequestRecord> {
   try {
+    const trimmedReason = params.reason.trim();
+    if (trimmedReason.length < 5) {
+      throw new Error(
+        'VALIDATION:Alasan atau catatan pengajuan libur/cuti wajib diisi minimal 5 karakter.',
+      );
+    }
     if (params.endDate < params.startDate) {
       throw new Error('VALIDATION:Tanggal selesai tidak boleh lebih awal dari tanggal mulai.');
     }

@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiRequest } from '../../lib/apiClient';
+import {
+  detectGenderFromName,
+  type EmployeeGender,
+} from '../../shared/genderAvatars';
 import type {
   DepartmentRecord,
   EmployeeDocumentItem,
@@ -45,6 +49,8 @@ export const EmployeeFormDrawer: React.FC<EmployeeFormDrawerProps> = ({
   const [divisionName, setDivisionName] = useState('');
   const [employmentStatus, setEmploymentStatus] = useState<EmploymentStatus>('active');
   const [joinDate, setJoinDate] = useState(getTodayISOJakarta());
+  const [gender, setGender] = useState<EmployeeGender>('male');
+  const [genderManuallySet, setGenderManuallySet] = useState(false);
   const [role, setRole] = useState<UserRole>('employee');
   const [departmentId, setDepartmentId] = useState<string>('');
   const [managerId, setManagerId] = useState<string>('');
@@ -81,6 +87,8 @@ export const EmployeeFormDrawer: React.FC<EmployeeFormDrawerProps> = ({
       setDivisionName(editingEmployee.divisionName);
       setEmploymentStatus(editingEmployee.employmentStatus);
       setJoinDate(editingEmployee.joinDate);
+      setGender(editingEmployee.gender || detectGenderFromName(editingEmployee.fullName));
+      setGenderManuallySet(true);
       setRole(editingEmployee.role);
       setDepartmentId(editingEmployee.departmentId ? String(editingEmployee.departmentId) : '');
       setManagerId(editingEmployee.managerId ? String(editingEmployee.managerId) : '');
@@ -109,6 +117,8 @@ export const EmployeeFormDrawer: React.FC<EmployeeFormDrawerProps> = ({
       setDivisionName(departments[0]?.division || 'Operasional Korporat');
       setEmploymentStatus('active');
       setJoinDate(getTodayISOJakarta());
+      setGender('male');
+      setGenderManuallySet(false);
       setRole('employee');
       setDepartmentId(departments[0]?.id ? String(departments[0].id) : '');
       setManagerId(actorRole === 'supervisor' && session?.employee.id ? String(session.employee.id) : '');
@@ -170,6 +180,7 @@ export const EmployeeFormDrawer: React.FC<EmployeeFormDrawerProps> = ({
             jobTitle: jobTitle.trim(),
             divisionName: divisionName.trim(),
             employmentStatus,
+            gender,
             ...(canEditRole ? { role } : {}),
             departmentId: departmentId ? Number(departmentId) : null,
             managerId: managerId ? Number(managerId) : null,
@@ -196,6 +207,7 @@ export const EmployeeFormDrawer: React.FC<EmployeeFormDrawerProps> = ({
             divisionName: divisionName.trim(),
             employmentStatus,
             joinDate,
+            gender,
             role,
             departmentId: departmentId ? Number(departmentId) : null,
             managerId: managerId ? Number(managerId) : null,
@@ -288,22 +300,45 @@ export const EmployeeFormDrawer: React.FC<EmployeeFormDrawerProps> = ({
                 type="text"
                 required
                 value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
+                onChange={(e) => {
+                  const nextName = e.target.value;
+                  setFullName(nextName);
+                  if (!genderManuallySet && nextName.trim()) {
+                    setGender(detectGenderFromName(nextName));
+                  }
+                }}
                 className="w-full min-h-[40px] rounded-lg border border-slate-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">
-                Nomor Identitas (NIK / KTP)
+                Jenis Kelamin (Foto Profil)
               </label>
-              <input
-                type="text"
-                value={identityNumber}
-                onChange={(e) => setIdentityNumber(e.target.value)}
-                placeholder="3174xxxxxxxxxxxx"
-                className="w-full min-h-[40px] rounded-lg border border-slate-200 px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
-              />
+              <select
+                value={gender}
+                onChange={(e) => {
+                  setGender(e.target.value as EmployeeGender);
+                  setGenderManuallySet(true);
+                }}
+                className="w-full min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+              >
+                <option value="male">Laki-laki (Foto Pria)</option>
+                <option value="female">Perempuan (Foto Wanita)</option>
+              </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">
+              Nomor Identitas (NIK / KTP)
+            </label>
+            <input
+              type="text"
+              value={identityNumber}
+              onChange={(e) => setIdentityNumber(e.target.value)}
+              placeholder="3174xxxxxxxxxxxx"
+              className="w-full min-h-[40px] rounded-lg border border-slate-200 px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
+            />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

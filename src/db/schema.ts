@@ -64,6 +64,7 @@ export const employees = pgTable('employees', {
   employmentStatus: text('employment_status').default('active').notNull(), // active | probation | inactive
   joinDate: text('join_date').notNull(), // YYYY-MM-DD
   avatarUrl: text('avatar_url').default('').notNull(),
+  gender: text('gender').default('male').notNull(), // male | female
   role: text('role').default('employee').notNull(), // super_admin | hr_admin | management | supervisor | employee
   departmentId: integer('department_id').references(() => departments.id),
   managerId: integer('manager_id'),
@@ -98,6 +99,9 @@ export const attendanceLogs = pgTable(
     overtimeMinutes: integer('overtime_minutes').default(0).notNull(),
     earlyLeaveMinutes: integer('early_leave_minutes').default(0).notNull(),
     clockInPhotoUrl: text('clock_in_photo_url').default('').notNull(),
+    clockOutPhotoUrl: text('clock_out_photo_url').default('').notNull(),
+    clockInReason: text('clock_in_reason').default('').notNull(),
+    clockOutReason: text('clock_out_reason').default('').notNull(),
     notes: text('notes').default('').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },

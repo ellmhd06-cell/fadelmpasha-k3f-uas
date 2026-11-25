@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface AvatarProps {
   name: string;
@@ -8,6 +8,10 @@ interface AvatarProps {
 
 export const Avatar: React.FC<AvatarProps> = ({ name, src, size = 'md' }) => {
   const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
 
   const initials = name
     .split(' ')

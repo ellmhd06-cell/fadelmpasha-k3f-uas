@@ -11,6 +11,7 @@ import {
   LogOut,
   Megaphone,
   Menu,
+  Pencil,
   Plus,
   Search,
   Users,
@@ -104,14 +105,25 @@ function getOvertimeStatusLabel(status: OvertimeRequestRecord['status']): string
 }
 
 export const BackofficePortal: React.FC = () => {
-  const { session, viewMode, setViewMode, signOut } = useAuth();
+  const { session, viewMode, setViewMode, signOut, updateOwnName } = useAuth();
   const permissions = session!.permissions;
   const currentEmployee = session!.employee;
 
   const [section, setSection] = useState<BackofficeSection>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<{
+    url: string;
+    type: 'CLOCK IN' | 'CLOCK OUT';
+    employeeName: string;
+    workDate: string;
+    timeWIB: string;
+    reason: string;
+  } | null>(null);
   const [confirmSignOutOpen, setConfirmSignOutOpen] = useState(false);
+  const [editingOwnName, setEditingOwnName] = useState(false);
+  const [ownNameDraft, setOwnNameDraft] = useState('');
+  const [savingOwnName, setSavingOwnName] = useState(false);
+  const [ownNameError, setOwnNameError] = useState<string | null>(null);
   const [overtimeConfirm, setOvertimeConfirm] = useState<{
     ot: OvertimeRequestRecord;
     decision: 'approved' | 'rejected';
@@ -409,15 +421,96 @@ export const BackofficePortal: React.FC = () => {
         </div>
 
         <div className="p-4 border-t border-slate-200 space-y-2.5 bg-white">
-          <div className="flex items-center gap-3">
-            <Avatar name={currentEmployee.fullName} src={currentEmployee.avatarUrl} size="md" />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-900 truncate">
-                {currentEmployee.fullName}
-              </p>
-              <p className="text-xs text-slate-500 truncate">{getRoleLabel(currentEmployee.role)}</p>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <Avatar name={currentEmployee.fullName} src={currentEmployee.avatarUrl} size="md" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 truncate">
+                  {currentEmployee.fullName}
+                </p>
+                <p className="text-xs text-slate-500 truncate">{getRoleLabel(currentEmployee.role)}</p>
+              </div>
             </div>
+            {!editingOwnName && (
+              <button
+                type="button"
+                onClick={() => {
+                  setOwnNameDraft(currentEmployee.fullName);
+                  setOwnNameError(null);
+                  setEditingOwnName(true);
+                }}
+                title="Ubah nama akun saya"
+                aria-label="Ubah nama akun saya"
+                className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900 shrink-0 cursor-pointer"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
+
+          {editingOwnName && (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const trimmed = ownNameDraft.trim();
+                if (trimmed.length < 2) {
+                  setOwnNameError('Minimal 2 karakter.');
+                  return;
+                }
+                try {
+                  setSavingOwnName(true);
+                  setOwnNameError(null);
+                  await updateOwnName(trimmed);
+                  setEditingOwnName(false);
+                  showToast('Nama akun Anda berhasil diperbarui.');
+                  loadBackofficeData();
+                } catch (err) {
+                  setOwnNameError(err instanceof Error ? err.message : 'Gagal memperbarui nama.');
+                } finally {
+                  setSavingOwnName(false);
+                }
+              }}
+              className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 space-y-2"
+            >
+              <label
+                htmlFor="backoffice-own-name"
+                className="block text-[11px] font-medium text-slate-600"
+              >
+                Ubah Nama Saya
+              </label>
+              <input
+                id="backoffice-own-name"
+                type="text"
+                required
+                minLength={2}
+                maxLength={120}
+                value={ownNameDraft}
+                onChange={(e) => setOwnNameDraft(e.target.value)}
+                className="w-full min-h-[34px] rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+              {ownNameError && <p className="text-[11px] text-red-700">{ownNameError}</p>}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="submit"
+                  disabled={savingOwnName}
+                  className="flex-1 min-h-[30px] rounded-lg bg-blue-700 text-[11px] font-semibold text-white hover:bg-blue-800 disabled:opacity-60 cursor-pointer"
+                >
+                  {savingOwnName ? 'Menyimpan...' : 'Simpan'}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingOwnName}
+                  onClick={() => {
+                    setEditingOwnName(false);
+                    setOwnNameError(null);
+                  }}
+                  className="min-h-[30px] px-2.5 rounded-lg border border-slate-200 bg-white text-[11px] font-medium text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Batal
+                </button>
+              </div>
+            </form>
+          )}
 
           <ViewModeToggle mode={viewMode} onChange={setViewMode} fullWidth />
 
@@ -997,18 +1090,51 @@ export const BackofficePortal: React.FC = () => {
                                   </p>
                                 </td>
                                 <td className="py-3 px-4 whitespace-nowrap">
-                                  {log.clockInPhotoUrl ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => setPhotoPreviewUrl(log.clockInPhotoUrl)}
-                                      className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline cursor-pointer"
-                                    >
-                                      <ImageIcon className="w-3.5 h-3.5" />
-                                      <span>Lihat</span>
-                                    </button>
-                                  ) : (
-                                    <span className="text-xs text-slate-400">—</span>
-                                  )}
+                                  <div className="flex items-center gap-1.5">
+                                    {log.clockInPhotoUrl ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPhotoPreview({
+                                            url: log.clockInPhotoUrl,
+                                            type: 'CLOCK IN',
+                                            employeeName: log.employeeName,
+                                            workDate: log.workDate,
+                                            timeWIB: formatTimeWIB(log.clockInAt),
+                                            reason: log.clockInReason || log.notes || '',
+                                          })
+                                        }
+                                        className="min-h-[30px] inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 whitespace-nowrap shrink-0 cursor-pointer"
+                                      >
+                                        <ImageIcon className="w-3 h-3 shrink-0" />
+                                        <span>CLOCK IN</span>
+                                      </button>
+                                    ) : (
+                                      <span className="text-[11px] text-slate-400">CLOCK IN: —</span>
+                                    )}
+
+                                    {log.clockOutPhotoUrl ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPhotoPreview({
+                                            url: log.clockOutPhotoUrl,
+                                            type: 'CLOCK OUT',
+                                            employeeName: log.employeeName,
+                                            workDate: log.workDate,
+                                            timeWIB: log.clockOutAt ? formatTimeWIB(log.clockOutAt) : '—',
+                                            reason: log.clockOutReason || '',
+                                          })
+                                        }
+                                        className="min-h-[30px] inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-2 text-[11px] font-semibold text-slate-800 hover:bg-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+                                      >
+                                        <ImageIcon className="w-3 h-3 shrink-0" />
+                                        <span>CLOCK OUT</span>
+                                      </button>
+                                    ) : (
+                                      <span className="text-[11px] text-slate-400">CLOCK OUT: —</span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="py-3 px-4 whitespace-nowrap">
                                   <StatusText
@@ -1258,31 +1384,53 @@ export const BackofficePortal: React.FC = () => {
       </div>
 
       {/* Photo Verification Lightbox */}
-      {photoPreviewUrl && (
+      {photoPreview && (
         <div
+          role="dialog"
+          aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
-          onClick={() => setPhotoPreviewUrl(null)}
+          onClick={() => setPhotoPreview(null)}
         >
           <div
             className="w-full max-w-md rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-              <span className="text-sm font-semibold text-slate-900">Dokumentasi Foto Presensi</span>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  Dokumentasi Foto {photoPreview.type}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {photoPreview.employeeName} · {formatDateID(photoPreview.workDate)} ·{' '}
+                  <span className="font-mono tabular-nums">{photoPreview.timeWIB} WIB</span>
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={() => setPhotoPreviewUrl(null)}
+                onClick={() => setPhotoPreview(null)}
+                aria-label="Tutup pratinjau foto"
                 className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-4 bg-slate-50 flex justify-center">
+            <div className="p-4 bg-slate-50 flex flex-col items-center gap-3">
               <img
-                src={photoPreviewUrl}
-                alt="Dokumentasi kehadiran karyawan"
+                src={photoPreview.url}
+                alt={`Dokumentasi foto ${photoPreview.type} ${photoPreview.employeeName}`}
                 className="max-h-96 rounded-xl object-contain"
               />
+              <div className="w-full rounded-xl border border-slate-200 bg-white p-3.5 space-y-1 text-left">
+                <p className="text-xs font-semibold text-slate-900">
+                  Keterangan: {photoPreview.type}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Alasan Presensi {photoPreview.type}:
+                </p>
+                <p className="text-sm text-slate-800 leading-relaxed">
+                  {photoPreview.reason || 'Tidak ada alasan tertulis.'}
+                </p>
+              </div>
             </div>
           </div>
         </div>

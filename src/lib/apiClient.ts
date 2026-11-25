@@ -1,8 +1,17 @@
 import { auth } from './firebase';
 
 const DEMO_TOKEN_KEY = 'karyaflow_demo_session_token';
-let inMemoryDemoToken: string | null =
-  typeof window !== 'undefined' ? window.sessionStorage.getItem(DEMO_TOKEN_KEY) : null;
+
+function readStoredDemoToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage.getItem(DEMO_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+let inMemoryDemoToken: string | null = readStoredDemoToken();
 
 export class ApiError extends Error {
   status: number;
@@ -15,10 +24,14 @@ export class ApiError extends Error {
 export function setActiveDemoToken(token: string | null) {
   inMemoryDemoToken = token;
   if (typeof window !== 'undefined') {
-    if (token) {
-      window.sessionStorage.setItem(DEMO_TOKEN_KEY, token);
-    } else {
-      window.sessionStorage.removeItem(DEMO_TOKEN_KEY);
+    try {
+      if (token) {
+        window.sessionStorage.setItem(DEMO_TOKEN_KEY, token);
+      } else {
+        window.sessionStorage.removeItem(DEMO_TOKEN_KEY);
+      }
+    } catch {
+      // Ignore Storage / SecurityError in strict iframe or privacy contexts
     }
   }
 }
@@ -52,17 +65,56 @@ export async function apiRequest<T>(
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`/api${path}`, {
-    ...options,
-    headers,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      ...options,
+      headers,
+      signal: options.signal ?? controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError('Waktu koneksi ke server habis. Silakan coba lagi.', 408);
+    }
+    throw new ApiError('Tidak dapat terhubung ke server. Periksa koneksi Anda.', 0);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const contentType = response.headers.get('content-type') || '';
-  const data = contentType.includes('application/json') ? await response.json() : null;
+  let data: unknown = null;
+  if (contentType.includes('application/json')) {
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+  }
 
   if (!response.ok) {
-    const message = data?.error || `Permintaan gagal dengan status ${response.status}.`;
-    throw new ApiError(message, response.status);
+    const jsonErr =
+      data && typeof data === 'object' && 'error' in data && typeof (data as { error: unknown }).error === 'string'
+        ? (data as { error: string }).error
+        : null;
+    if (jsonErr) {
+      throw new ApiError(jsonErr, response.status);
+    }
+    let textFallback = '';
+    try {
+      if (!contentType.includes('application/json')) {
+        textFallback = (await response.text()).slice(0, 140).trim();
+      }
+    } catch {
+      textFallback = '';
+    }
+    const cleanText = textFallback && !textFallback.startsWith('<') ? textFallback : '';
+    throw new ApiError(
+      cleanText || `Permintaan gagal dengan status ${response.status}.`,
+      response.status,
+    );
   }
 
   return data as T;

@@ -1,9 +1,10 @@
 import crypto from 'crypto';
 
+const EPHEMERAL_FALLBACK_SECRET = crypto.randomBytes(32).toString('hex');
 const DEMO_SECRET =
   process.env.DEMO_AUTH_SECRET ||
   process.env.SQL_PASSWORD ||
-  'karyaflow-enterprise-demo-session-key-2026';
+  EPHEMERAL_FALLBACK_SECRET;
 
 export interface DemoTokenPayload {
   uid: string;

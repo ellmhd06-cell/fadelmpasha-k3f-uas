@@ -3,6 +3,7 @@ import { Camera, RefreshCw, Upload, X } from 'lucide-react';
 
 interface CameraSelfieModalProps {
   open: boolean;
+  mode?: 'clock_in' | 'clock_out';
   onClose: () => void;
   onCapture: (dataUrl: string) => void;
 }
@@ -36,6 +37,7 @@ export function compressImageFileToDataUrl(file: File): Promise<string> {
 
 export const CameraSelfieModal: React.FC<CameraSelfieModalProps> = ({
   open,
+  mode = 'clock_in',
   onClose,
   onCapture,
 }) => {
@@ -161,9 +163,15 @@ export const CameraSelfieModal: React.FC<CameraSelfieModalProps> = ({
         <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between gap-3">
           <div>
             <h2 id="camera-selfie-title" className="font-display text-base font-semibold text-slate-900">
-              Selfie Presensi
+              {mode === 'clock_out'
+                ? 'Selfie Presensi Pulang (CLOCK OUT)'
+                : 'Selfie Presensi Masuk (CLOCK IN)'}
             </h2>
-            <p className="text-xs text-slate-500">Ambil foto wajah secara langsung untuk bukti presensi</p>
+            <p className="text-xs text-slate-500">
+              {mode === 'clock_out'
+                ? 'Ambil foto wajah secara langsung sebagai bukti CLOCK OUT'
+                : 'Ambil foto wajah secara langsung sebagai bukti CLOCK IN'}
+            </p>
           </div>
           <button
             type="button"

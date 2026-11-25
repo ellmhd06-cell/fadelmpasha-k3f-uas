@@ -1,4 +1,4 @@
-import { count, eq } from 'drizzle-orm';
+import { count, eq, sql } from 'drizzle-orm';
 import { db } from '../../db/index.ts';
 import {
   announcements,
@@ -16,7 +16,17 @@ import {
   users,
   workShifts,
 } from '../../db/schema.ts';
+import {
+  detectGenderFromName,
+  doesAvatarMatchGender,
+  isBuiltInAvatarUrl,
+  pickGenderAvatarUrl,
+  type EmployeeGender,
+} from '../../shared/genderAvatars.ts';
 import type { UserRole } from '../../shared/types.ts';
+
+export const DEFAULT_EMPLOYEE_AVATAR_URL =
+  '/src/assets/images/avatar_male_staff_a_1795592962574.jpg';
 
 let seedPromise: Promise<void> | null = null;
 
@@ -147,6 +157,7 @@ async function runSeed(): Promise<void> {
         employmentStatus: 'active',
         joinDate: '2022-03-01',
         avatarUrl: '/src/assets/images/avatar_hr_director_1794971297186.jpg',
+        gender: 'female' as EmployeeGender,
         role: 'hr_admin',
         departmentId: deptByCode.get('HRD')?.id ?? null,
         shiftId: regularShift?.id ?? null,
@@ -173,7 +184,8 @@ async function runSeed(): Promise<void> {
         divisionName: 'Executive & Operations',
         employmentStatus: 'active',
         joinDate: '2021-01-10',
-        avatarUrl: '',
+        avatarUrl: '/src/assets/images/avatar_vp_operations_1795591348457.jpg',
+        gender: 'male' as EmployeeGender,
         role: 'management',
         departmentId: deptByCode.get('OPS')?.id ?? null,
         shiftId: regularShift?.id ?? null,
@@ -199,6 +211,7 @@ async function runSeed(): Promise<void> {
         employmentStatus: 'active',
         joinDate: '2022-07-15',
         avatarUrl: '/src/assets/images/avatar_tech_supervisor_1794971297687.jpg',
+        gender: 'male' as EmployeeGender,
         role: 'supervisor',
         departmentId: deptByCode.get('ENG')?.id ?? null,
         shiftId: regularShift?.id ?? null,
@@ -225,6 +238,7 @@ async function runSeed(): Promise<void> {
         employmentStatus: 'active',
         joinDate: '2023-01-10',
         avatarUrl: '/src/assets/images/avatar_staff_employee_1794971297453.jpg',
+        gender: 'female' as EmployeeGender,
         role: 'employee',
         departmentId: deptByCode.get('ENG')?.id ?? null,
         shiftId: regularShift?.id ?? null,
@@ -251,7 +265,8 @@ async function runSeed(): Promise<void> {
         divisionName: 'Digital & Product',
         employmentStatus: 'active',
         joinDate: '2023-06-05',
-        avatarUrl: '',
+        avatarUrl: '/src/assets/images/avatar_backend_engineer_1795591349218.jpg',
+        gender: 'male' as EmployeeGender,
         role: 'employee',
         departmentId: deptByCode.get('ENG')?.id ?? null,
         shiftId: regularShift?.id ?? null,
@@ -276,7 +291,8 @@ async function runSeed(): Promise<void> {
         divisionName: 'Finance & Corporate Governance',
         employmentStatus: 'probation',
         joinDate: '2026-09-01',
-        avatarUrl: '',
+        avatarUrl: '/src/assets/images/avatar_finance_analyst_1795591349098.jpg',
+        gender: 'female' as EmployeeGender,
         role: 'employee',
         departmentId: deptByCode.get('FIN')?.id ?? null,
         shiftId: regularShift?.id ?? null,
@@ -300,12 +316,18 @@ async function runSeed(): Promise<void> {
         .where(eq(employees.employeeCode, item.employeeCode));
 
       if (existingByCode[0]) {
-        // Keep demo emails aligned for the 4 demo login buttons if previously seeded with @karyaflow.id old emails
+        // Keep demo emails, gender, and portraits aligned without overwriting custom names or custom uploads
+        const resolvedAvatarUrl =
+          !existingByCode[0].avatarUrl || isBuiltInAvatarUrl(existingByCode[0].avatarUrl)
+            ? item.avatarUrl
+            : existingByCode[0].avatarUrl;
         await db
           .update(employees)
           .set({
             email: item.email,
             role: item.role,
+            gender: item.gender,
+            avatarUrl: resolvedAvatarUrl,
             identityNumber: existingByCode[0].identityNumber || item.identityNumber,
             address: existingByCode[0].address || item.address,
             divisionName: existingByCode[0].divisionName || item.divisionName,
@@ -321,8 +343,40 @@ async function runSeed(): Promise<void> {
                 : existingByCode[0].documentsJson,
           })
           .where(eq(employees.id, existingByCode[0].id));
+        if (existingByCode[0].userId && resolvedAvatarUrl) {
+          await db
+            .update(users)
+            .set({ photoUrl: resolvedAvatarUrl })
+            .where(eq(users.id, existingByCode[0].userId));
+        }
       } else {
         await db.insert(employees).values(item).onConflictDoNothing();
+      }
+    }
+
+    // Reconcile any non-seeded employee with empty or mismatched built-in avatarUrl
+    const seededCodes = new Set(demoEmployeesSeed.map((d) => d.employeeCode));
+    const currentEmps = await db.select().from(employees);
+    for (const emp of currentEmps) {
+      if (seededCodes.has(emp.employeeCode)) continue;
+      const currentGender = (emp.gender === 'female' ? 'female' : 'male') as EmployeeGender;
+      const needsGenderFix =
+        !emp.avatarUrl ||
+        (isBuiltInAvatarUrl(emp.avatarUrl) && !doesAvatarMatchGender(emp.avatarUrl, currentGender));
+
+      if (needsGenderFix) {
+        const inferredGender = detectGenderFromName(emp.fullName);
+        const nextAvatarUrl = pickGenderAvatarUrl(inferredGender, emp.employeeCode || emp.email);
+        await db
+          .update(employees)
+          .set({ gender: inferredGender, avatarUrl: nextAvatarUrl })
+          .where(eq(employees.id, emp.id));
+        if (emp.userId) {
+          await db
+            .update(users)
+            .set({ photoUrl: nextAvatarUrl })
+            .where(eq(users.id, emp.userId));
+        }
       }
     }
 
@@ -385,6 +439,7 @@ async function runSeed(): Promise<void> {
             isWithinGeofence: true,
             status: 'on_time',
             workMinutes: 240,
+            clockInReason: 'Hadir di Kantor Pusat SCBD',
             notes: 'Hadir di Kantor Pusat SCBD',
           },
           {
@@ -397,6 +452,7 @@ async function runSeed(): Promise<void> {
             isWithinGeofence: true,
             status: 'on_time',
             workMinutes: 240,
+            clockInReason: 'Standup pagi tim engineering',
             notes: 'Standup pagi tim engineering',
           },
           {
@@ -409,10 +465,29 @@ async function runSeed(): Promise<void> {
             isWithinGeofence: true,
             status: 'late',
             workMinutes: 120,
+            clockInReason: 'Terlambat karena kendala transportasi',
             notes: 'Terlambat karena kendala transportasi',
           },
         ])
         .onConflictDoNothing();
+    }
+
+    // Backfill legacy attendance logs that stored combined notes before clockInReason/clockOutReason existed
+    const legacyAttRows = await db.select().from(attendanceLogs);
+    for (const att of legacyAttRows) {
+      if (!att.clockInReason && !att.clockOutReason && att.notes) {
+        const marker = ' · Pulang: ';
+        const idx = att.notes.indexOf(marker);
+        const parsedIn = idx >= 0 ? att.notes.slice(0, idx).trim() : att.notes.trim();
+        const parsedOut = idx >= 0 ? att.notes.slice(idx + marker.length).trim() : '';
+        await db
+          .update(attendanceLogs)
+          .set({
+            clockInReason: parsedIn,
+            clockOutReason: parsedOut,
+          })
+          .where(eq(attendanceLogs.id, att.id));
+      }
     }
 
     // 8. Leave Requests (2-tier demo: pending_supervisor & pending_hr)
@@ -641,10 +716,14 @@ export async function getOrCreateAuthenticatedProfile(
   try {
     await ensureSeeded();
 
+    const normalizedEmail = email.trim().toLowerCase();
     const existingUsers = await db.select({ value: count() }).from(users);
     const isFirstSystemUser = (existingUsers[0]?.value ?? 0) === 0;
 
-    const matchingEmployees = await db.select().from(employees).where(eq(employees.email, email));
+    const matchingEmployees = await db
+      .select()
+      .from(employees)
+      .where(sql`lower(${employees.email}) = ${normalizedEmail}`);
     const existingEmp = matchingEmployees[0];
 
     const resolvedRole: UserRole = existingEmp
@@ -653,22 +732,32 @@ export async function getOrCreateAuthenticatedProfile(
         ? 'super_admin'
         : 'employee';
 
+    const resolvedDisplayName =
+      existingEmp?.fullName || displayName || normalizedEmail.split('@')[0];
+    const resolvedGender: EmployeeGender = existingEmp
+      ? ((existingEmp.gender === 'female' ? 'female' : 'male') as EmployeeGender)
+      : detectGenderFromName(resolvedDisplayName);
+    const resolvedPhoto =
+      existingEmp?.avatarUrl ||
+      photoUrl ||
+      pickGenderAvatarUrl(resolvedGender, normalizedEmail);
+
     const upsertedUsers = await db
       .insert(users)
       .values({
         uid,
-        email,
-        displayName: existingEmp?.fullName || displayName || email.split('@')[0],
-        photoUrl: existingEmp?.avatarUrl || photoUrl || '',
+        email: normalizedEmail,
+        displayName: resolvedDisplayName,
+        photoUrl: resolvedPhoto,
         role: resolvedRole,
         lastLoginAt: new Date(),
       })
       .onConflictDoUpdate({
         target: users.uid,
         set: {
-          email,
-          displayName: existingEmp?.fullName || displayName || email.split('@')[0],
-          photoUrl: existingEmp?.avatarUrl || photoUrl || '',
+          email: normalizedEmail,
+          displayName: resolvedDisplayName,
+          photoUrl: resolvedPhoto,
           lastLoginAt: new Date(),
         },
       })
@@ -677,11 +766,12 @@ export async function getOrCreateAuthenticatedProfile(
     const userRow = upsertedUsers[0];
 
     if (existingEmp) {
-      if (existingEmp.userId !== userRow.id || existingEmp.role !== userRow.role) {
+      if (existingEmp.userId !== userRow.id || existingEmp.role !== userRow.role || !existingEmp.avatarUrl) {
         await db
           .update(employees)
           .set({
             userId: userRow.id,
+            avatarUrl: existingEmp.avatarUrl || resolvedPhoto,
             updatedAt: new Date(),
           })
           .where(eq(employees.id, existingEmp.id));
@@ -699,26 +789,38 @@ export async function getOrCreateAuthenticatedProfile(
       return { user: userRow, employeeId: linkedByUser[0].id };
     }
 
-    const [empCountRow] = await db.select({ value: count() }).from(employees);
-    const nextNum = (empCountRow?.value ?? 0) + 1;
-    const empCode = `KF-${String(nextNum).padStart(3, '0')}`;
+    const existingCodeRows = await db
+      .select({ employeeCode: employees.employeeCode })
+      .from(employees);
+    let maxNum = 0;
+    for (const row of existingCodeRows) {
+      const m = /^KF-(\d+)$/i.exec(row.employeeCode.trim());
+      if (m) {
+        const parsed = Number(m[1]);
+        if (parsed > maxNum) maxNum = parsed;
+      }
+    }
+    const empCode = `KF-${String(Math.max(maxNum + 1, existingCodeRows.length + 1)).padStart(3, '0')}`;
 
     const [defaultDept] = await db.select().from(departments).limit(1);
     const [defaultShift] = await db.select().from(workShifts).limit(1);
     const [defaultOffice] = await db.select().from(officeLocations).limit(1);
+
+    const newAvatarUrl = photoUrl || pickGenderAvatarUrl(resolvedGender, empCode);
 
     const [createdEmp] = await db
       .insert(employees)
       .values({
         userId: userRow.id,
         employeeCode: empCode,
-        fullName: displayName || email.split('@')[0],
-        email,
+        fullName: resolvedDisplayName,
+        email: normalizedEmail,
         phone: '',
         jobTitle: resolvedRole === 'super_admin' ? 'System Administrator' : 'Staff Karyawan',
         employmentStatus: 'active',
         joinDate: getJakartaDateString(),
-        avatarUrl: photoUrl || '',
+        avatarUrl: newAvatarUrl,
+        gender: resolvedGender,
         role: resolvedRole,
         departmentId: defaultDept?.id ?? null,
         shiftId: defaultShift?.id ?? null,

@@ -34,20 +34,29 @@ import {
   submitLeaveRequest,
   submitOvertimeRequest,
   updateEmployeeRecord,
+  updateOwnProfileName,
 } from '../services/hrmService.ts';
 import { getOrCreateAuthenticatedProfile, ensureSeeded } from '../services/seedService.ts';
 
 const DEMO_PASSWORD = process.env.DEMO_PASSWORD || 'demo123';
 
 const demoLoginSchema = z.object({
-  email: z.string().trim().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
+});
+
+const updateOwnProfileSchema = z.object({
+  fullName: z
+    .string()
+    .trim()
+    .min(2, 'Nama lengkap minimal 2 karakter.')
+    .max(120, 'Nama lengkap maksimal 120 karakter.'),
 });
 
 const createEmployeeSchema = z.object({
   employeeCode: z.string().trim().min(2).max(24),
   fullName: z.string().trim().min(2).max(120),
-  email: z.string().trim().email(),
+  email: z.string().trim().toLowerCase().email(),
   phone: z.string().trim().max(30).default(''),
   identityNumber: z.string().trim().max(40).default(''),
   address: z.string().trim().max(240).default(''),
@@ -55,6 +64,7 @@ const createEmployeeSchema = z.object({
   divisionName: z.string().trim().max(100).default(''),
   employmentStatus: z.enum(['active', 'probation', 'inactive']).default('active'),
   joinDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  gender: z.enum(['male', 'female']).optional(),
   role: z.enum(['super_admin', 'hr_admin', 'management', 'supervisor', 'employee']).default('employee'),
   departmentId: z.number().int().positive().nullable().default(null),
   managerId: z.number().int().positive().nullable().default(null),
@@ -72,6 +82,7 @@ const updateEmployeeSchema = z.object({
   jobTitle: z.string().trim().min(2).max(100).optional(),
   divisionName: z.string().trim().max(100).optional(),
   employmentStatus: z.enum(['active', 'probation', 'inactive']).optional(),
+  gender: z.enum(['male', 'female']).optional(),
   role: z.enum(['super_admin', 'hr_admin', 'management', 'supervisor', 'employee']).optional(),
   departmentId: z.number().int().positive().nullable().optional(),
   managerId: z.number().int().positive().nullable().optional(),
@@ -102,24 +113,60 @@ const updateEmployeeSchema = z.object({
     .optional(),
 });
 
-const clockSchema = z.object({
+const selfieDataUrlSchema = z
+  .string({ error: 'Foto selfie presensi wajib diambil.' })
+  .trim()
+  .min(20, 'Foto selfie presensi wajib diambil.')
+  .max(450000, 'Ukuran foto selfie melebihi batas maksimal.')
+  .refine((val) => /^data:image\/(jpeg|jpg|png|webp);base64,/i.test(val), {
+    message: 'Format foto selfie tidak valid.',
+  });
+
+const clockInSchema = z.object({
   latitude: z.number().min(-90).max(90).nullable().default(null),
   longitude: z.number().min(-180).max(180).nullable().default(null),
-  clockInPhotoUrl: z.string().max(400000).optional(),
-  notes: z.string().trim().max(240).default(''),
+  clockInPhotoUrl: selfieDataUrlSchema,
+  clockInReason: z
+    .string({ error: 'Alasan presensi CLOCK IN wajib diisi minimal 3 karakter.' })
+    .trim()
+    .min(3, 'Alasan presensi CLOCK IN wajib diisi minimal 3 karakter.')
+    .max(240, 'Alasan presensi CLOCK IN maksimal 240 karakter.')
+    .optional(),
+  notes: z.string().trim().max(240).optional(),
+});
+
+const clockOutSchema = z.object({
+  latitude: z.number().min(-90).max(90).nullable().default(null),
+  longitude: z.number().min(-180).max(180).nullable().default(null),
+  clockOutPhotoUrl: selfieDataUrlSchema,
+  clockOutReason: z
+    .string({ error: 'Alasan presensi CLOCK OUT wajib diisi minimal 3 karakter.' })
+    .trim()
+    .min(3, 'Alasan presensi CLOCK OUT wajib diisi minimal 3 karakter.')
+    .max(240, 'Alasan presensi CLOCK OUT maksimal 240 karakter.')
+    .optional(),
+  notes: z.string().trim().max(240).optional(),
 });
 
 const overtimeSchema = z.object({
-  workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  hours: z.number().min(0.5).max(12),
-  reason: z.string().trim().min(5).max(300),
+  workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Tanggal lembur tidak valid.'),
+  hours: z.number().min(0.5, 'Durasi lembur minimal 0.5 jam.').max(12, 'Durasi lembur maksimal 12 jam.'),
+  reason: z
+    .string({ error: 'Alasan atau catatan pengajuan lembur wajib diisi minimal 5 karakter.' })
+    .trim()
+    .min(5, 'Alasan atau catatan pengajuan lembur wajib diisi minimal 5 karakter.')
+    .max(300, 'Alasan lembur maksimal 300 karakter.'),
 });
 
 const leaveSubmitSchema = z.object({
-  leaveTypeId: z.number().int().positive(),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  reason: z.string().trim().min(5).max(500),
+  leaveTypeId: z.number().int().positive('Jenis cuti/izin wajib dipilih.'),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Tanggal mulai tidak valid.'),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Tanggal selesai tidak valid.'),
+  reason: z
+    .string({ error: 'Alasan atau catatan pengajuan libur/cuti wajib diisi minimal 5 karakter.' })
+    .trim()
+    .min(5, 'Alasan atau catatan pengajuan libur/cuti wajib diisi minimal 5 karakter.')
+    .max(500, 'Alasan pengajuan maksimal 500 karakter.'),
 });
 
 const reviewSchema = z.object({
@@ -222,6 +269,7 @@ apiRouter.get('/auth/demo-accounts', async (_req, res) => {
         email: emp.email,
         jobTitle: emp.jobTitle,
         departmentName: emp.departmentName,
+        avatarUrl: emp.avatarUrl,
         role: emp.role,
         employmentStatus: emp.employmentStatus,
       })),
@@ -306,6 +354,50 @@ apiRouter.get('/me', async (req: AuthRequest, res) => {
     });
   } catch (error) {
     handleRouteError(res, error, 'Gagal memuat sesi pengguna.');
+  }
+});
+
+// Self-service name update (strictly scoped to the currently authenticated user's own account)
+apiRouter.patch('/me/profile', async (req: AuthRequest, res) => {
+  const parsed = updateOwnProfileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const firstIssue = parsed.error.issues[0]?.message || 'Nama lengkap tidak valid.';
+    res.status(400).json({ error: firstIssue });
+    return;
+  }
+
+  try {
+    const ctx = req.authContext!;
+    const updatedEmployee = await updateOwnProfileName({
+      userId: ctx.userId,
+      employeeId: ctx.employeeId,
+      actorEmail: ctx.email,
+      fullName: parsed.data.fullName,
+    });
+
+    broadcastRealtimeEvent({
+      type: 'employee:updated',
+      timestamp: new Date().toISOString(),
+      payload: {
+        employeeId: updatedEmployee.id,
+        message: `${updatedEmployee.fullName} memperbarui nama profilnya`,
+      },
+    });
+
+    res.json({
+      user: {
+        id: ctx.userId,
+        uid: ctx.uid,
+        email: ctx.email,
+        displayName: updatedEmployee.fullName,
+        photoUrl: updatedEmployee.avatarUrl,
+        role: ctx.role,
+      },
+      employee: updatedEmployee,
+      permissions: buildPermissions(ctx.role),
+    });
+  } catch (error) {
+    handleRouteError(res, error, 'Gagal memperbarui nama akun Anda.');
   }
 });
 
@@ -492,9 +584,16 @@ apiRouter.get('/attendance', async (req: AuthRequest, res) => {
 });
 
 apiRouter.post('/attendance/clock-in', async (req: AuthRequest, res) => {
-  const parsed = clockSchema.safeParse(req.body ?? {});
+  const parsed = clockInSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
-    res.status(400).json({ error: 'Payload presensi masuk tidak valid.', details: parsed.error.flatten() });
+    const firstIssue =
+      parsed.error.issues[0]?.message || 'Foto selfie dan alasan CLOCK IN wajib dilengkapi.';
+    res.status(400).json({ error: firstIssue, details: parsed.error.flatten() });
+    return;
+  }
+  const clockInReason = (parsed.data.clockInReason || parsed.data.notes || '').trim();
+  if (clockInReason.length < 3) {
+    res.status(400).json({ error: 'Alasan presensi CLOCK IN wajib diisi minimal 3 karakter.' });
     return;
   }
   try {
@@ -504,7 +603,8 @@ apiRouter.post('/attendance/clock-in', async (req: AuthRequest, res) => {
       latitude: parsed.data.latitude,
       longitude: parsed.data.longitude,
       clockInPhotoUrl: parsed.data.clockInPhotoUrl,
-      notes: parsed.data.notes,
+      clockInReason,
+      notes: clockInReason,
     });
     broadcastRealtimeEvent({
       type: 'attendance:recorded',
@@ -512,7 +612,7 @@ apiRouter.post('/attendance/clock-in', async (req: AuthRequest, res) => {
       payload: {
         employeeId: ctx.employeeId,
         status: log.status,
-        message: `${log.employeeName} baru saja melakukan presensi masuk`,
+        message: `${log.employeeName} baru saja melakukan presensi masuk (CLOCK IN)`,
       },
     });
     res.status(201).json(log);
@@ -522,9 +622,16 @@ apiRouter.post('/attendance/clock-in', async (req: AuthRequest, res) => {
 });
 
 apiRouter.post('/attendance/clock-out', async (req: AuthRequest, res) => {
-  const parsed = clockSchema.safeParse(req.body ?? {});
+  const parsed = clockOutSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
-    res.status(400).json({ error: 'Payload presensi pulang tidak valid.', details: parsed.error.flatten() });
+    const firstIssue =
+      parsed.error.issues[0]?.message || 'Foto selfie dan alasan CLOCK OUT wajib dilengkapi.';
+    res.status(400).json({ error: firstIssue, details: parsed.error.flatten() });
+    return;
+  }
+  const clockOutReason = (parsed.data.clockOutReason || parsed.data.notes || '').trim();
+  if (clockOutReason.length < 3) {
+    res.status(400).json({ error: 'Alasan presensi CLOCK OUT wajib diisi minimal 3 karakter.' });
     return;
   }
   try {
@@ -533,7 +640,9 @@ apiRouter.post('/attendance/clock-out', async (req: AuthRequest, res) => {
       employeeId: ctx.employeeId,
       latitude: parsed.data.latitude,
       longitude: parsed.data.longitude,
-      notes: parsed.data.notes,
+      clockOutPhotoUrl: parsed.data.clockOutPhotoUrl,
+      clockOutReason,
+      notes: clockOutReason,
     });
     broadcastRealtimeEvent({
       type: 'attendance:recorded',
@@ -541,7 +650,7 @@ apiRouter.post('/attendance/clock-out', async (req: AuthRequest, res) => {
       payload: {
         employeeId: ctx.employeeId,
         status: 'clock_out',
-        message: `${log.employeeName} baru saja melakukan presensi pulang`,
+        message: `${log.employeeName} baru saja melakukan presensi pulang (CLOCK OUT)`,
       },
     });
     res.json(log);
@@ -569,7 +678,9 @@ apiRouter.get('/overtime', async (req: AuthRequest, res) => {
 apiRouter.post('/overtime', async (req: AuthRequest, res) => {
   const parsed = overtimeSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'Data pengajuan lembur tidak valid.', details: parsed.error.flatten() });
+    const firstIssue =
+      parsed.error.issues[0]?.message || 'Alasan atau catatan pengajuan lembur wajib diisi minimal 5 karakter.';
+    res.status(400).json({ error: firstIssue, details: parsed.error.flatten() });
     return;
   }
   try {
@@ -667,7 +778,9 @@ apiRouter.get('/leaves/requests', async (req: AuthRequest, res) => {
 apiRouter.post('/leaves/requests', async (req: AuthRequest, res) => {
   const parsed = leaveSubmitSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'Data pengajuan cuti tidak valid.', details: parsed.error.flatten() });
+    const firstIssue =
+      parsed.error.issues[0]?.message || 'Alasan atau catatan pengajuan libur/cuti wajib diisi minimal 5 karakter.';
+    res.status(400).json({ error: firstIssue, details: parsed.error.flatten() });
     return;
   }
   try {

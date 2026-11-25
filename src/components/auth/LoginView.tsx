@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowRight, Lock, Mail } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowRight, Lock, Mail, RefreshCw, Search } from 'lucide-react';
 import loginOfficeHero from '../../assets/images/login_office_architecture_1794971297485.jpg';
 import { useAuth } from '../../contexts/AuthContext';
 import type { EmploymentStatus, UserRole } from '../../shared/types';
 import { getRoleLabel } from '../../utils/formatters';
+import { Avatar } from '../common/Avatar';
 import { ViewModeToggle } from '../common/ViewModeToggle';
 import { PWAInstallButton } from '../pwa/PWAInstallButton';
 
@@ -19,6 +20,7 @@ interface DirectoryDemoAccount {
   email: string;
   jobTitle: string;
   departmentName: string | null;
+  avatarUrl?: string;
   role: UserRole;
   employmentStatus: EmploymentStatus;
 }
@@ -30,39 +32,120 @@ const ROLE_BUTTONS: RoleQuickOption[] = [
   { label: 'Karyawan', email: 'karyawan@karyaflow.id' },
 ];
 
+const CORE_FALLBACK_ACCOUNTS: DirectoryDemoAccount[] = [
+  {
+    id: -1,
+    employeeCode: 'KF-001',
+    fullName: 'Ratna Pratiwi',
+    email: 'hr.admin@karyaflow.id',
+    jobTitle: 'Head of People Operations',
+    departmentName: 'Human Resources & People Ops',
+    avatarUrl: '/src/assets/images/avatar_hr_director_1794971297186.jpg',
+    role: 'hr_admin',
+    employmentStatus: 'active',
+  },
+  {
+    id: -2,
+    employeeCode: 'KF-000',
+    fullName: 'Hendra Gunawan',
+    email: 'manajemen@karyaflow.id',
+    jobTitle: 'VP of Corporate Operations',
+    departmentName: 'Operations & Management',
+    avatarUrl: '/src/assets/images/avatar_vp_operations_1795591348457.jpg',
+    role: 'management',
+    employmentStatus: 'active',
+  },
+  {
+    id: -3,
+    employeeCode: 'KF-002',
+    fullName: 'Budi Santoso',
+    email: 'supervisor@karyaflow.id',
+    jobTitle: 'Engineering Manager',
+    departmentName: 'Technology & Engineering',
+    avatarUrl: '/src/assets/images/avatar_tech_supervisor_1794971297687.jpg',
+    role: 'supervisor',
+    employmentStatus: 'active',
+  },
+  {
+    id: -4,
+    employeeCode: 'KF-003',
+    fullName: 'Nadia Kusuma',
+    email: 'karyawan@karyaflow.id',
+    jobTitle: 'Senior Product Designer',
+    departmentName: 'Technology & Engineering',
+    avatarUrl: '/src/assets/images/avatar_staff_employee_1794971297453.jpg',
+    role: 'employee',
+    employmentStatus: 'active',
+  },
+];
+
 export const LoginView: React.FC = () => {
-  const { signInWithDemo, authError, loading, viewMode, setViewMode } = useAuth();
+  const { signInWithDemo, authError, submitting, viewMode, setViewMode } = useAuth();
   const [email, setEmail] = useState(ROLE_BUTTONS[0].email);
   const [password, setPassword] = useState('demo123');
-  const [directoryAccounts, setDirectoryAccounts] = useState<DirectoryDemoAccount[]>([]);
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [directoryAccounts, setDirectoryAccounts] = useState<DirectoryDemoAccount[]>(
+    CORE_FALLBACK_ACCOUNTS,
+  );
+  const [loadingDirectory, setLoadingDirectory] = useState(true);
+  const [directoryWarning, setDirectoryWarning] = useState(false);
+
+  const loadDirectory = useCallback(async () => {
+    setLoadingDirectory(true);
+    setDirectoryWarning(false);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch('/api/auth/demo-accounts', {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setDirectoryAccounts(data);
+      } else {
+        setDirectoryAccounts(CORE_FALLBACK_ACCOUNTS);
+      }
+    } catch {
+      setDirectoryWarning(true);
+      setDirectoryAccounts((prev) => (prev.length > 0 ? prev : CORE_FALLBACK_ACCOUNTS));
+    } finally {
+      clearTimeout(timeoutId);
+      setLoadingDirectory(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let active = true;
-    fetch('/api/auth/demo-accounts')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => {
-        if (active && Array.isArray(data)) {
-          setDirectoryAccounts(data);
-        }
-      })
-      .catch(() => {
-        // Fallback smoothly to core role buttons if offline
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    loadDirectory();
+  }, [loadDirectory]);
+
+  const filteredDirectory = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase();
+    if (!q) return directoryAccounts;
+    return directoryAccounts.filter(
+      (emp) =>
+        emp.fullName.toLowerCase().includes(q) ||
+        emp.employeeCode.toLowerCase().includes(q) ||
+        emp.email.toLowerCase().includes(q) ||
+        emp.jobTitle.toLowerCase().includes(q),
+    );
+  }, [directoryAccounts, employeeSearch]);
+
+  const selectedAccount = useMemo(
+    () =>
+      directoryAccounts.find((a) => a.email.toLowerCase() === email.trim().toLowerCase()) ?? null,
+    [directoryAccounts, email],
+  );
+
+  const selectedDirectoryEmail = selectedAccount ? selectedAccount.email : '';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await signInWithDemo(email.trim(), password);
+    if (submitting) return;
+    await signInWithDemo(email.trim().toLowerCase(), password);
   };
-
-  const selectedDirectoryEmail = directoryAccounts.some(
-    (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
-  )
-    ? directoryAccounts.find((a) => a.email.toLowerCase() === email.trim().toLowerCase())!.email
-    : '';
 
   const showDesktopSplit = viewMode === 'desktop';
 
@@ -81,7 +164,7 @@ export const LoginView: React.FC = () => {
             : 'w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs'
         }
       >
-        <div className="max-w-md w-full mx-auto space-y-6">
+        <div className="max-w-md w-full mx-auto space-y-5">
           {/* Centered Logo & Brand Header */}
           <div className="flex flex-col items-center text-center">
             <img
@@ -100,11 +183,11 @@ export const LoginView: React.FC = () => {
           {/* Desktop / Mobile View Mode Toggle */}
           <ViewModeToggle mode={viewMode} onChange={setViewMode} fullWidth />
 
-          {/* 4 Concise Role Buttons + Employee Directory Dropdown */}
+          {/* 4 Concise Role Buttons + Search + Employee Directory Dropdown */}
           <div className="space-y-3">
             <div>
               <p className="text-xs font-medium text-slate-600 mb-2">
-                Pilih Peran Demo
+                Pilih Peran Cepat
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {ROLE_BUTTONS.map((roleOpt) => {
@@ -113,11 +196,12 @@ export const LoginView: React.FC = () => {
                     <button
                       key={roleOpt.email}
                       type="button"
+                      disabled={submitting}
                       onClick={() => {
                         setEmail(roleOpt.email);
                         setPassword('demo123');
                       }}
-                      className={`min-h-[40px] px-2.5 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      className={`min-h-[40px] px-2.5 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap disabled:opacity-60 ${
                         selected
                           ? 'border-blue-700 bg-blue-50 text-blue-700'
                           : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -130,13 +214,56 @@ export const LoginView: React.FC = () => {
               </div>
             </div>
 
-            <div>
-              <label
-                htmlFor="demo-employee-select"
-                className="block text-xs font-medium text-slate-600 mb-1.5"
-              >
-                Atau Pilih Karyawan Terdaftar / Baru ({directoryAccounts.length})
-              </label>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor="demo-employee-select"
+                  className="block text-xs font-medium text-slate-600"
+                >
+                  Pilih Karyawan ({filteredDirectory.length})
+                </label>
+                {directoryWarning && (
+                  <button
+                    type="button"
+                    onClick={loadDirectory}
+                    disabled={loadingDirectory}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:underline cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Muat Ulang</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={employeeSearch}
+                  onChange={(e) => {
+                    const nextQ = e.target.value;
+                    setEmployeeSearch(nextQ);
+                    const qLower = nextQ.trim().toLowerCase();
+                    if (qLower) {
+                      const matches = directoryAccounts.filter(
+                        (emp) =>
+                          emp.fullName.toLowerCase().includes(qLower) ||
+                          emp.employeeCode.toLowerCase().includes(qLower) ||
+                          emp.email.toLowerCase().includes(qLower) ||
+                          emp.jobTitle.toLowerCase().includes(qLower),
+                      );
+                      if (matches.length === 1) {
+                        setEmail(matches[0].email);
+                        setPassword('demo123');
+                      }
+                    }
+                  }}
+                  placeholder="Cari nama, NIP, atau jabatan..."
+                  aria-label="Cari karyawan"
+                  className="w-full min-h-[38px] pl-8 pr-3 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+              </div>
+
               <select
                 id="demo-employee-select"
                 value={selectedDirectoryEmail}
@@ -148,13 +275,38 @@ export const LoginView: React.FC = () => {
                 }}
                 className="w-full min-h-[42px] rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
               >
-                <option value="">— Pilih dari direktori karyawan —</option>
-                {directoryAccounts.map((emp) => (
+                <option value="">
+                  {filteredDirectory.length === 0
+                    ? '— Tidak ada karyawan yang cocok —'
+                    : '— Pilih karyawan dari daftar —'}
+                </option>
+                {filteredDirectory.map((emp) => (
                   <option key={emp.id} value={emp.email}>
                     {emp.employeeCode} — {emp.fullName} ({getRoleLabel(emp.role)})
                   </option>
                 ))}
               </select>
+
+              {selectedAccount && (
+                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <Avatar
+                    name={selectedAccount.fullName}
+                    src={selectedAccount.avatarUrl}
+                    size="sm"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-slate-900 truncate">
+                      {selectedAccount.fullName}
+                    </p>
+                    <p className="text-[11px] text-slate-500 truncate">
+                      {selectedAccount.employeeCode} · {selectedAccount.jobTitle}
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-medium text-blue-700 shrink-0">
+                    {getRoleLabel(selectedAccount.role)}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -208,10 +360,10 @@ export const LoginView: React.FC = () => {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={submitting}
               className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-800 disabled:opacity-60 cursor-pointer"
             >
-              <span>{loading ? 'Memproses...' : 'Masuk'}</span>
+              <span>{submitting ? 'Memproses...' : 'Masuk'}</span>
               <ArrowRight className="w-4 h-4 shrink-0" />
             </button>
           </form>

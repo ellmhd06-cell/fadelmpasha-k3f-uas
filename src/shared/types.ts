@@ -66,6 +66,7 @@ export interface EmployeeRecord {
   employmentStatus: EmploymentStatus;
   joinDate: string;
   avatarUrl: string;
+  gender: 'male' | 'female';
   role: UserRole;
   departmentId: number | null;
   departmentName: string | null;
@@ -107,6 +108,9 @@ export interface AttendanceRecord {
   overtimeMinutes: number;
   earlyLeaveMinutes: number;
   clockInPhotoUrl: string;
+  clockOutPhotoUrl: string;
+  clockInReason: string;
+  clockOutReason: string;
   notes: string;
 }
 

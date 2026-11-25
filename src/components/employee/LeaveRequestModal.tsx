@@ -44,7 +44,7 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (reason.trim().length < 5) {
-      setErrorMsg('Tuliskan alasan pengajuan minimal 5 karakter.');
+      setErrorMsg('Alasan atau catatan pengajuan libur/cuti wajib diisi minimal 5 karakter.');
       return;
     }
     if (estimatedDays <= 0) {
@@ -81,10 +81,10 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
         <div className="flex items-center justify-between px-6 pt-4 pb-3 border-b border-slate-100">
           <div>
             <h2 className="font-display text-lg font-semibold text-slate-900">
-              Ajukan Cuti atau Izin
+              Ajukan Libur, Cuti, atau Izin
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Pengajuan langsung diteruskan ke supervisor & HRD
+              Wajib mencantumkan alasan/catatan pengajuan untuk supervisor & HRD
             </p>
           </div>
           <button
@@ -97,7 +97,7 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
+        <form onSubmit={handleSubmit} noValidate className="p-6 space-y-4 overflow-y-auto">
           {errorMsg && (
             <div
               role="alert"
@@ -171,16 +171,29 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
           </div>
 
           <div>
-            <label htmlFor="leave-reason" className="block text-xs font-medium text-slate-700 mb-1.5">
-              Alasan Pengajuan
-            </label>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <label htmlFor="leave-reason" className="text-xs font-medium text-slate-700">
+                Alasan / Catatan Pengajuan (Wajib)
+              </label>
+              <span
+                className={`text-[11px] font-mono tabular-nums ${
+                  reason.trim().length >= 5 ? 'text-emerald-700' : 'text-amber-700'
+                }`}
+              >
+                {reason.trim().length}/5 min. kar
+              </span>
+            </div>
             <textarea
               id="leave-reason"
               rows={3}
               required
-              placeholder="Contoh: Keperluan keluarga atau pemeriksaan kesehatan..."
+              minLength={5}
+              placeholder="Contoh: Keperluan keluarga mendesak atau pemeriksaan kesehatan rutin..."
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(e) => {
+                setReason(e.target.value);
+                if (errorMsg && e.target.value.trim().length >= 5) setErrorMsg(null);
+              }}
               className="w-full rounded-xl border border-slate-200 bg-white p-3.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </div>

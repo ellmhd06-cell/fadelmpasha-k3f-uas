@@ -8,14 +8,17 @@ import {
   Clock,
   FileText,
   Home,
+  Image as ImageIcon,
   LogOut,
   MapPin,
   Megaphone,
+  Pencil,
   Plus,
   Printer,
   RefreshCw,
   Upload,
   User as UserIcon,
+  X,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
@@ -89,7 +92,7 @@ function mapLeaveTone(status: LeaveRequestRecord['status']): SemanticTone {
 }
 
 export const EmployeePortal: React.FC = () => {
-  const { session, viewMode, setViewMode, signOut } = useAuth();
+  const { session, viewMode, setViewMode, signOut, updateOwnName } = useAuth();
   const isMobileView = viewMode === 'mobile';
   const [activeTab, setActiveTab] = useState<EmployeeTab>('home');
   const [attendanceList, setAttendanceList] = useState<AttendanceRecord[]>([]);
@@ -113,12 +116,26 @@ export const EmployeePortal: React.FC = () => {
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [confirmClockOutOpen, setConfirmClockOutOpen] = useState(false);
   const [confirmSignOutOpen, setConfirmSignOutOpen] = useState(false);
+  const [attendancePhotoPreview, setAttendancePhotoPreview] = useState<{
+    url: string;
+    type: 'CLOCK IN' | 'CLOCK OUT';
+    workDate: string;
+    timeWIB: string;
+    reason: string;
+  } | null>(null);
+
+  // Self-service name edit (logged-in account only)
+  const [editingOwnName, setEditingOwnName] = useState(false);
+  const [ownNameDraft, setOwnNameDraft] = useState('');
+  const [savingOwnName, setSavingOwnName] = useState(false);
+  const [ownNameError, setOwnNameError] = useState<string | null>(null);
 
   // Overtime request form
   const [otOpen, setOtOpen] = useState(false);
   const [otDate, setOtDate] = useState(getTodayISOJakarta());
   const [otHours, setOtHours] = useState('2');
   const [otReason, setOtReason] = useState('');
+  const [otError, setOtError] = useState<string | null>(null);
   const [otBusy, setOtBusy] = useState(false);
 
   const employee = session!.employee;
@@ -205,19 +222,50 @@ export const EmployeePortal: React.FC = () => {
   };
 
   const handleClockAction = async (mode: 'in' | 'out') => {
+    const trimmedReason = clockNotes.trim();
+    if (trimmedReason.length < 3) {
+      setErrorMsg(
+        mode === 'in'
+          ? 'Alasan presensi CLOCK IN wajib diisi minimal 3 karakter sebelum mencatat masuk.'
+          : 'Alasan presensi CLOCK OUT wajib diisi minimal 3 karakter sebelum mencatat pulang.',
+      );
+      return;
+    }
+
+    if (!clockPhotoDataUrl) {
+      setErrorMsg(
+        mode === 'in'
+          ? 'Foto selfie CLOCK IN wajib diambil sebelum mencatat presensi masuk.'
+          : 'Foto selfie CLOCK OUT wajib diambil sebelum mencatat presensi pulang.',
+      );
+      return;
+    }
+
     try {
       setClockBusy(true);
       setErrorMsg(null);
       const coords = await getBrowserCoordinates();
       const endpoint = mode === 'in' ? '/attendance/clock-in' : '/attendance/clock-out';
+      const payload =
+        mode === 'in'
+          ? {
+              latitude: coords.latitude,
+              longitude: coords.longitude,
+              clockInPhotoUrl: clockPhotoDataUrl,
+              clockInReason: trimmedReason,
+              notes: trimmedReason,
+            }
+          : {
+              latitude: coords.latitude,
+              longitude: coords.longitude,
+              clockOutPhotoUrl: clockPhotoDataUrl,
+              clockOutReason: trimmedReason,
+              notes: trimmedReason,
+            };
+
       const recorded = await apiRequest<AttendanceRecord>(endpoint, {
         method: 'POST',
-        body: JSON.stringify({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          clockInPhotoUrl: mode === 'in' && clockPhotoDataUrl ? clockPhotoDataUrl : undefined,
-          notes: clockNotes.trim(),
-        }),
+        body: JSON.stringify(payload),
       });
       setClockNotes('');
       setClockPhotoDataUrl('');
@@ -228,8 +276,8 @@ export const EmployeePortal: React.FC = () => {
       const note = coords.geoMessage ? ` (${coords.geoMessage})` : '';
       showToast(
         mode === 'in'
-          ? `Presensi masuk tercatat pukul ${formatTimeWIB(recorded.clockInAt)} WIB${note}`
-          : `Presensi pulang tercatat pukul ${formatTimeWIB(recorded.clockOutAt)} WIB${note}`,
+          ? `Presensi masuk (CLOCK IN) tercatat pukul ${formatTimeWIB(recorded.clockInAt)} WIB${note}`
+          : `Presensi pulang (CLOCK OUT) tercatat pukul ${formatTimeWIB(recorded.clockOutAt)} WIB${note}`,
       );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal mencatat kehadiran.');
@@ -240,23 +288,30 @@ export const EmployeePortal: React.FC = () => {
 
   const handleSubmitOvertime = async (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedReason = otReason.trim();
+    if (trimmedReason.length < 5) {
+      setOtError('Alasan atau catatan pengajuan lembur wajib diisi minimal 5 karakter.');
+      return;
+    }
     try {
       setOtBusy(true);
+      setOtError(null);
       setErrorMsg(null);
       const created = await apiRequest<OvertimeRequestRecord>('/overtime', {
         method: 'POST',
         body: JSON.stringify({
           workDate: otDate,
           hours: Number(otHours),
-          reason: otReason.trim(),
+          reason: trimmedReason,
         }),
       });
       setOvertimeList((prev) => [created, ...prev]);
       setOtReason('');
+      setOtError(null);
       setOtOpen(false);
       showToast('Pengajuan lembur berhasil dikirim untuk persetujuan.');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Gagal mengirim pengajuan lembur.');
+      setOtError(err instanceof Error ? err.message : 'Gagal mengirim pengajuan lembur.');
     } finally {
       setOtBusy(false);
     }
@@ -441,17 +496,55 @@ export const EmployeePortal: React.FC = () => {
 
                 <div className="mt-5 space-y-3">
                   {(!todayAttendance || !todayAttendance.clockOutAt) && (
-                    <input
-                      type="text"
-                      value={clockNotes}
-                      onChange={(e) => setClockNotes(e.target.value)}
-                      placeholder="Catatan singkat (opsional, misal: WFO Lantai 3)"
-                      className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-slate-50 px-3.5 text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
-                    />
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <label
+                          htmlFor="clock-reason-input"
+                          className="text-xs font-semibold text-slate-700"
+                        >
+                          {!todayAttendance
+                            ? 'Alasan / Catatan Presensi CLOCK IN (Wajib)'
+                            : 'Alasan / Catatan Presensi CLOCK OUT (Wajib)'}
+                        </label>
+                        <span
+                          className={`text-[11px] font-mono tabular-nums ${
+                            clockNotes.trim().length >= 3 ? 'text-emerald-700' : 'text-amber-700'
+                          }`}
+                        >
+                          {clockNotes.trim().length}/3 min. kar
+                        </span>
+                      </div>
+                      <input
+                        id="clock-reason-input"
+                        type="text"
+                        required
+                        minLength={3}
+                        maxLength={240}
+                        value={clockNotes}
+                        onChange={(e) => setClockNotes(e.target.value)}
+                        placeholder={
+                          !todayAttendance
+                            ? 'Contoh: Hadir WFO di Kantor SCBD / Kunjungan klien'
+                            : 'Contoh: Pekerjaan shift selesai & laporan terkirim'
+                        }
+                        className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-slate-50 px-3.5 text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      />
+                    </div>
                   )}
 
-                  {!todayAttendance && (
+                  {(!todayAttendance || !todayAttendance.clockOutAt) && (
                     <div className="space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-slate-700">
+                          {!todayAttendance
+                            ? 'Foto Selfie CLOCK IN (Wajib)'
+                            : 'Foto Selfie CLOCK OUT (Wajib)'}
+                        </span>
+                        <span className="text-[11px] font-medium text-amber-700">
+                          {clockPhotoDataUrl ? 'Foto siap dikirim' : 'Belum diambil'}
+                        </span>
+                      </div>
+
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
@@ -459,7 +552,15 @@ export const EmployeePortal: React.FC = () => {
                           className="min-h-[42px] inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 cursor-pointer"
                         >
                           <Camera className="w-4 h-4 shrink-0" />
-                          <span>{clockPhotoDataUrl ? 'Ambil Ulang Selfie' : 'Lampirkan Foto (Kamera)'}</span>
+                          <span>
+                            {clockPhotoDataUrl
+                              ? !todayAttendance
+                                ? 'Ambil Ulang Selfie CLOCK IN'
+                                : 'Ambil Ulang Selfie CLOCK OUT'
+                              : !todayAttendance
+                                ? 'Ambil Selfie CLOCK IN (Kamera)'
+                                : 'Ambil Selfie CLOCK OUT (Kamera)'}
+                          </span>
                         </button>
 
                         <label className="min-h-[42px] inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer">
@@ -480,15 +581,23 @@ export const EmployeePortal: React.FC = () => {
                           <div className="flex items-center gap-3 min-w-0">
                             <img
                               src={clockPhotoDataUrl}
-                              alt="Pratinjau foto selfie presensi"
+                              alt={
+                                !todayAttendance
+                                  ? 'Pratinjau foto selfie CLOCK IN'
+                                  : 'Pratinjau foto selfie CLOCK OUT'
+                              }
                               className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
                             />
                             <div className="min-w-0">
                               <p className="text-xs font-semibold text-slate-900 truncate">
-                                Foto selfie siap dilampirkan
+                                {!todayAttendance
+                                  ? 'Foto selfie CLOCK IN siap dilampirkan'
+                                  : 'Foto selfie CLOCK OUT siap dilampirkan'}
                               </p>
                               <p className="text-[11px] text-slate-500">
-                                Akan dikirim saat Anda mencatat presensi masuk
+                                {!todayAttendance
+                                  ? 'Akan disimpan sebagai bukti CLOCK IN'
+                                  : 'Akan disimpan sebagai bukti CLOCK OUT'}
                               </p>
                             </div>
                           </div>
@@ -511,16 +620,30 @@ export const EmployeePortal: React.FC = () => {
                       onClick={() => handleClockAction('in')}
                       className="w-full min-h-[48px] rounded-xl bg-blue-700 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60 transition-colors cursor-pointer"
                     >
-                      {clockBusy ? 'Mengambil lokasi & mencatat...' : 'Catat Presensi Masuk'}
+                      {clockBusy ? 'Mengambil lokasi & mencatat...' : 'Catat Presensi Masuk (CLOCK IN)'}
                     </button>
                   ) : !todayAttendance.clockOutAt ? (
                     <button
                       type="button"
                       disabled={clockBusy}
-                      onClick={() => setConfirmClockOutOpen(true)}
+                      onClick={() => {
+                        if (clockNotes.trim().length < 3) {
+                          setErrorMsg(
+                            'Alasan presensi CLOCK OUT wajib diisi minimal 3 karakter sebelum mencatat pulang.',
+                          );
+                          return;
+                        }
+                        if (!clockPhotoDataUrl) {
+                          setErrorMsg(
+                            'Foto selfie CLOCK OUT wajib diambil sebelum mencatat presensi pulang.',
+                          );
+                          return;
+                        }
+                        setConfirmClockOutOpen(true);
+                      }}
                       className="w-full min-h-[48px] rounded-xl bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer"
                     >
-                      {clockBusy ? 'Mengambil lokasi & mencatat...' : 'Catat Presensi Pulang'}
+                      {clockBusy ? 'Mengambil lokasi & mencatat...' : 'Catat Presensi Pulang (CLOCK OUT)'}
                     </button>
                   ) : (
                     <div className="min-h-[48px] rounded-xl border border-emerald-200 bg-emerald-50 flex items-center justify-center text-sm font-medium text-emerald-800">
@@ -718,11 +841,20 @@ export const EmployeePortal: React.FC = () => {
             {otOpen && (
               <form
                 onSubmit={handleSubmitOvertime}
+                noValidate
                 className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3"
               >
                 <h2 className="font-display text-sm font-semibold text-slate-900">
                   Form Pengajuan Lembur
                 </h2>
+                {otError && (
+                  <div
+                    role="alert"
+                    className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-800"
+                  >
+                    {otError}
+                  </div>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">Tanggal</label>
@@ -749,21 +881,39 @@ export const EmployeePortal: React.FC = () => {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Alasan Lembur</label>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label htmlFor="overtime-reason-input" className="text-xs font-medium text-slate-700">
+                      Alasan / Catatan Pengajuan Lembur (Wajib)
+                    </label>
+                    <span
+                      className={`text-[11px] font-mono tabular-nums ${
+                        otReason.trim().length >= 5 ? 'text-emerald-700' : 'text-amber-700'
+                      }`}
+                    >
+                      {otReason.trim().length}/5 min. kar
+                    </span>
+                  </div>
                   <input
+                    id="overtime-reason-input"
                     type="text"
                     required
                     minLength={5}
-                    placeholder="Contoh: Penyelesaian deployment sistem produksi"
+                    placeholder="Contoh: Penyelesaian deployment sistem produksi & rekonsiliasi data"
                     value={otReason}
-                    onChange={(e) => setOtReason(e.target.value)}
+                    onChange={(e) => {
+                      setOtReason(e.target.value);
+                      if (otError && e.target.value.trim().length >= 5) setOtError(null);
+                    }}
                     className="w-full min-h-[42px] rounded-xl border border-slate-200 px-3 text-sm"
                   />
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setOtOpen(false)}
+                    onClick={() => {
+                      setOtOpen(false);
+                      setOtError(null);
+                    }}
                     className="min-h-[40px] px-4 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 cursor-pointer"
                   >
                     Batal
@@ -807,7 +957,7 @@ export const EmployeePortal: React.FC = () => {
                         {log.notes ? ` · ${log.notes}` : ''}
                       </p>
                     </div>
-                    <div className="flex items-center justify-between sm:justify-end gap-5">
+                    <div className="flex flex-wrap items-center justify-between sm:justify-end gap-3">
                       <div className="font-mono text-xs text-slate-700 tabular-nums">
                         Masuk <strong className="text-slate-900">{formatTimeWIB(log.clockInAt)}</strong>
                         <span className="mx-2 text-slate-300">/</span>
@@ -816,6 +966,46 @@ export const EmployeePortal: React.FC = () => {
                           {log.clockOutAt ? formatTimeWIB(log.clockOutAt) : '—'}
                         </strong>
                       </div>
+                      {(log.clockInPhotoUrl || log.clockOutPhotoUrl) && (
+                        <div className="flex items-center gap-1.5">
+                          {log.clockInPhotoUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAttendancePhotoPreview({
+                                  url: log.clockInPhotoUrl,
+                                  type: 'CLOCK IN',
+                                  workDate: log.workDate,
+                                  timeWIB: formatTimeWIB(log.clockInAt),
+                                  reason: log.clockInReason || log.notes || '',
+                                })
+                              }
+                              className="min-h-[32px] inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              <ImageIcon className="w-3 h-3 shrink-0" />
+                              <span>CLOCK IN</span>
+                            </button>
+                          )}
+                          {log.clockOutPhotoUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAttendancePhotoPreview({
+                                  url: log.clockOutPhotoUrl,
+                                  type: 'CLOCK OUT',
+                                  workDate: log.workDate,
+                                  timeWIB: log.clockOutAt ? formatTimeWIB(log.clockOutAt) : '—',
+                                  reason: log.clockOutReason || '',
+                                })
+                              }
+                              className="min-h-[32px] inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-2.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              <ImageIcon className="w-3 h-3 shrink-0" />
+                              <span>CLOCK OUT</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
                       <StatusText
                         tone={log.status === 'on_time' ? 'success' : 'warning'}
                         label={getAttendanceStatusLabel(log.status)}
@@ -949,18 +1139,106 @@ export const EmployeePortal: React.FC = () => {
         {/* TAB 4: PROFIL, SLIP GAJI, KPI & DOKUMEN */}
         {activeTab === 'profile' && (
           <div className={`space-y-6 ${isMobileView ? '' : 'max-w-3xl'}`}>
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 flex items-center gap-4">
-              <Avatar name={employee.fullName} src={employee.avatarUrl} size="lg" />
-              <div className="min-w-0">
-                <h1 className="font-display text-lg font-bold text-slate-900 truncate">
-                  {employee.fullName}
-                </h1>
-                <p className="text-sm text-slate-600 truncate">{employee.jobTitle}</p>
-                <p className="text-xs text-slate-500 mt-1 font-mono tabular-nums">
-                  {employee.employeeCode} · {getRoleLabel(employee.role)} ·{' '}
-                  {getEmploymentStatusLabel(employee.employmentStatus)}
-                </p>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-4 min-w-0">
+                  <Avatar name={employee.fullName} src={employee.avatarUrl} size="lg" />
+                  <div className="min-w-0">
+                    <h1 className="font-display text-lg font-bold text-slate-900 truncate">
+                      {employee.fullName}
+                    </h1>
+                    <p className="text-sm text-slate-600 truncate">{employee.jobTitle}</p>
+                    <p className="text-xs text-slate-500 mt-1 font-mono tabular-nums">
+                      {employee.employeeCode} · {getRoleLabel(employee.role)} ·{' '}
+                      {getEmploymentStatusLabel(employee.employmentStatus)}
+                    </p>
+                  </div>
+                </div>
+                {!editingOwnName && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOwnNameDraft(employee.fullName);
+                      setOwnNameError(null);
+                      setEditingOwnName(true);
+                    }}
+                    className="min-h-[36px] inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 shrink-0 cursor-pointer no-print"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Ubah Nama</span>
+                  </button>
+                )}
               </div>
+
+              {editingOwnName && (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const trimmed = ownNameDraft.trim();
+                    if (trimmed.length < 2) {
+                      setOwnNameError('Nama lengkap minimal 2 karakter.');
+                      return;
+                    }
+                    try {
+                      setSavingOwnName(true);
+                      setOwnNameError(null);
+                      await updateOwnName(trimmed);
+                      setEditingOwnName(false);
+                      showToast('Nama akun Anda berhasil diperbarui.');
+                    } catch (err) {
+                      setOwnNameError(
+                        err instanceof Error ? err.message : 'Gagal memperbarui nama akun.',
+                      );
+                    } finally {
+                      setSavingOwnName(false);
+                    }
+                  }}
+                  className="pt-3 border-t border-slate-100 space-y-2.5 no-print"
+                >
+                  <label
+                    htmlFor="employee-own-name-input"
+                    className="block text-xs font-medium text-slate-600"
+                  >
+                    Ubah Nama Akun Saya ({employee.email})
+                  </label>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      id="employee-own-name-input"
+                      type="text"
+                      required
+                      minLength={2}
+                      maxLength={120}
+                      value={ownNameDraft}
+                      onChange={(e) => setOwnNameDraft(e.target.value)}
+                      placeholder="Masukkan nama lengkap Anda"
+                      className="flex-1 min-h-[40px] rounded-xl border border-slate-200 px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="submit"
+                        disabled={savingOwnName}
+                        className="min-h-[40px] px-4 rounded-xl bg-blue-700 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-60 cursor-pointer"
+                      >
+                        {savingOwnName ? 'Menyimpan...' : 'Simpan'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={savingOwnName}
+                        onClick={() => {
+                          setEditingOwnName(false);
+                          setOwnNameError(null);
+                        }}
+                        className="min-h-[40px] px-3 rounded-xl border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  </div>
+                  {ownNameError && (
+                    <p className="text-xs font-medium text-red-700">{ownNameError}</p>
+                  )}
+                </form>
+              )}
             </div>
 
             {/* Identitas & Struktur Organisasi */}
@@ -1233,17 +1511,74 @@ export const EmployeePortal: React.FC = () => {
 
       <CameraSelfieModal
         open={cameraModalOpen}
+        mode={todayAttendance ? 'clock_out' : 'clock_in'}
         onClose={() => setCameraModalOpen(false)}
         onCapture={(dataUrl) => {
           setClockPhotoDataUrl(dataUrl);
-          showToast('Foto selfie berhasil diambil.');
+          setErrorMsg(null);
+          showToast(
+            todayAttendance
+              ? 'Foto selfie CLOCK OUT berhasil diambil.'
+              : 'Foto selfie CLOCK IN berhasil diambil.',
+          );
         }}
       />
 
+      {attendancePhotoPreview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          onClick={() => setAttendancePhotoPreview(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  Dokumentasi Foto {attendancePhotoPreview.type}
+                </p>
+                <p className="text-xs text-slate-500 font-mono tabular-nums">
+                  {formatDateID(attendancePhotoPreview.workDate)} · {attendancePhotoPreview.timeWIB} WIB
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAttendancePhotoPreview(null)}
+                aria-label="Tutup pratinjau foto"
+                className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 bg-slate-50 flex flex-col items-center gap-3">
+              <img
+                src={attendancePhotoPreview.url}
+                alt={`Foto presensi ${attendancePhotoPreview.type}`}
+                className="max-h-96 rounded-xl object-contain"
+              />
+              <div className="w-full rounded-xl border border-slate-200 bg-white p-3 space-y-1 text-left">
+                <p className="text-xs font-semibold text-slate-900">
+                  Keterangan: {attendancePhotoPreview.type}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Alasan Presensi {attendancePhotoPreview.type}:
+                </p>
+                <p className="text-sm text-slate-800 leading-relaxed">
+                  {attendancePhotoPreview.reason || 'Tidak ada alasan tertulis.'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         open={confirmClockOutOpen}
-        title="Konfirmasi Presensi Pulang"
-        description="Pastikan jam kerja shift Anda sudah selesai. Sistem akan merekam jam pulang dan menghitung total durasi kerja hari ini."
+        title="Konfirmasi Presensi Pulang (CLOCK OUT)"
+        description="Pastikan jam kerja shift Anda sudah selesai dan foto selfie CLOCK OUT sudah sesuai. Sistem akan merekam jam pulang serta total durasi kerja hari ini."
         confirmLabel="Ya, Catat Pulang"
         busy={clockBusy}
         onConfirm={async () => {

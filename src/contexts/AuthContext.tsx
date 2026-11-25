@@ -29,12 +29,14 @@ function getInitialViewMode(): ViewMode {
 interface AuthContextValue {
   session: AuthSessionResponse | null;
   loading: boolean;
+  submitting: boolean;
   authError: string | null;
   portalMode: PortalMode;
   viewMode: ViewMode;
   setPortalMode: (mode: PortalMode) => void;
   setViewMode: (mode: ViewMode) => void;
   signInWithDemo: (email: string, password: string) => Promise<void>;
+  updateOwnName: (fullName: string) => Promise<AuthSessionResponse>;
   signOut: () => Promise<void>;
   refreshSession: () => Promise<void>;
 }
@@ -44,6 +46,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<AuthSessionResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [viewMode, setViewModeState] = useState<ViewMode>(getInitialViewMode);
   const [portalMode, setPortalModeState] = useState<PortalMode>('employee');
@@ -99,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async (email: string, password: string) => {
       try {
         setAuthError(null);
-        setLoading(true);
+        setSubmitting(true);
         const res = await apiRequest<{ token: string; session: AuthSessionResponse }>(
           '/auth/demo-login',
           {
@@ -116,11 +119,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           err instanceof Error ? err.message : 'Gagal masuk dengan akun demo.';
         setAuthError(message);
       } finally {
-        setLoading(false);
+        setSubmitting(false);
       }
     },
     [viewMode, resolvePortalForSession],
   );
+
+  const updateOwnName = useCallback(async (fullName: string): Promise<AuthSessionResponse> => {
+    const updatedSession = await apiRequest<AuthSessionResponse>('/me/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ fullName }),
+    });
+    setSession(updatedSession);
+    return updatedSession;
+  }, []);
 
   const signOut = useCallback(async () => {
     setAuthError(null);
@@ -156,12 +168,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         session,
         loading,
+        submitting,
         authError,
         portalMode,
         viewMode,
         setPortalMode,
         setViewMode,
         signInWithDemo,
+        updateOwnName,
         signOut,
         refreshSession: fetchBackendSession,
       }}
