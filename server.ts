@@ -32,16 +32,40 @@ async function startServer() {
     res.status(404).json({ error: 'Endpoint API tidak ditemukan.' });
   });
 
-  if (!isProduction) {
-    // Serve a self-unregistering cleanup worker on legacy SW paths in dev mode
-    app.get(['/sw.js', '/dev-sw.js'], (_req, res) => {
-      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.send(
-        `self.addEventListener('install', () => self.skipWaiting());\nself.addEventListener('activate', (event) => { event.waitUntil((async () => { try { const keys = await caches.keys(); await Promise.all(keys.map((k) => caches.delete(k))); } catch {} try { await self.registration.unregister(); } catch {} await self.clients.claim(); })()); });\n`,
-      );
-    });
+  const CLEANUP_SW_SCRIPT = [
+    `self.addEventListener('install', () => self.skipWaiting());`,
+    `self.addEventListener('activate', (event) => {`,
+    `  event.waitUntil((async () => {`,
+    `    try {`,
+    `      const keys = await caches.keys();`,
+    `      await Promise.all(keys.map((k) => caches.delete(k)));`,
+    `    } catch {}`,
+    `    try {`,
+    `      await self.registration.unregister();`,
+    `    } catch {}`,
+    `    try {`,
+    `      await self.clients.claim();`,
+    `    } catch {}`,
+    `  })());`,
+    `});`,
+    ``,
+  ].join('\n');
 
+  const NOOP_REGISTER_SW_SCRIPT = `/* Service Worker disabled; legacy registrations cleaned automatically */\n`;
+
+  app.get(['/sw.js', '/dev-sw.js'], (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.send(CLEANUP_SW_SCRIPT);
+  });
+
+  app.get('/registerSW.js', (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.send(NOOP_REGISTER_SW_SCRIPT);
+  });
+
+  if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {

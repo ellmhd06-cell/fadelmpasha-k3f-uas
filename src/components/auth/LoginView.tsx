@@ -1,83 +1,28 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Lock, Mail, RefreshCw, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Lock,
+  Mail,
+  RefreshCw,
+} from 'lucide-react';
 import loginOfficeHero from '../../assets/images/login_office_architecture_1794971297485.jpg';
 import { useAuth } from '../../contexts/AuthContext';
-import type { EmploymentStatus, UserRole } from '../../shared/types';
-import { getRoleLabel } from '../../utils/formatters';
 import { clearAppCacheAndReload } from '../../utils/pwaRecovery';
-import { Avatar } from '../common/Avatar';
 import { ViewModeToggle } from '../common/ViewModeToggle';
 import { PWAInstallButton } from '../pwa/PWAInstallButton';
 
 interface RoleQuickOption {
   label: string;
+  subtitle: string;
   email: string;
 }
 
-interface DirectoryDemoAccount {
-  id: number;
-  employeeCode: string;
-  fullName: string;
-  email: string;
-  jobTitle: string;
-  departmentName: string | null;
-  avatarUrl?: string;
-  role: UserRole;
-  employmentStatus: EmploymentStatus;
-}
-
-const ROLE_BUTTONS: RoleQuickOption[] = [
-  { label: 'HR Admin', email: 'hr.admin@karyaflow.id' },
-  { label: 'Manajemen', email: 'manajemen@karyaflow.id' },
-  { label: 'Supervisor', email: 'supervisor@karyaflow.id' },
-  { label: 'Karyawan', email: 'karyawan@karyaflow.id' },
-];
-
-const CORE_FALLBACK_ACCOUNTS: DirectoryDemoAccount[] = [
-  {
-    id: -1,
-    employeeCode: 'KF-001',
-    fullName: 'Ratna Pratiwi',
-    email: 'hr.admin@karyaflow.id',
-    jobTitle: 'Head of People Operations',
-    departmentName: 'Human Resources & People Ops',
-    avatarUrl: '/src/assets/images/avatar_hr_director_1794971297186.jpg',
-    role: 'hr_admin',
-    employmentStatus: 'active',
-  },
-  {
-    id: -2,
-    employeeCode: 'KF-000',
-    fullName: 'Hendra Gunawan',
-    email: 'manajemen@karyaflow.id',
-    jobTitle: 'VP of Corporate Operations',
-    departmentName: 'Operations & Management',
-    avatarUrl: '/src/assets/images/avatar_vp_operations_1795591348457.jpg',
-    role: 'management',
-    employmentStatus: 'active',
-  },
-  {
-    id: -3,
-    employeeCode: 'KF-002',
-    fullName: 'Budi Santoso',
-    email: 'supervisor@karyaflow.id',
-    jobTitle: 'Engineering Manager',
-    departmentName: 'Technology & Engineering',
-    avatarUrl: '/src/assets/images/avatar_tech_supervisor_1794971297687.jpg',
-    role: 'supervisor',
-    employmentStatus: 'active',
-  },
-  {
-    id: -4,
-    employeeCode: 'KF-003',
-    fullName: 'Nadia Kusuma',
-    email: 'karyawan@karyaflow.id',
-    jobTitle: 'Senior Product Designer',
-    departmentName: 'Technology & Engineering',
-    avatarUrl: '/src/assets/images/avatar_staff_employee_1794971297453.jpg',
-    role: 'employee',
-    employmentStatus: 'active',
-  },
+const INSTANT_ROLES: RoleQuickOption[] = [
+  { label: 'HR Admin', subtitle: 'Backoffice SDM & Payroll', email: 'hr.admin@karyaflow.id' },
+  { label: 'Manajemen', subtitle: 'Ringkasan Eksekutif', email: 'manajemen@karyaflow.id' },
+  { label: 'Supervisor', subtitle: 'Persetujuan & Tim', email: 'supervisor@karyaflow.id' },
+  { label: 'Karyawan', subtitle: 'Presensi & Pengajuan', email: 'karyawan@karyaflow.id' },
 ];
 
 export const LoginView: React.FC = () => {
@@ -90,77 +35,69 @@ export const LoginView: React.FC = () => {
     viewMode,
     setViewMode,
   } = useAuth();
-  const [email, setEmail] = useState(ROLE_BUTTONS[0].email);
-  const [password, setPassword] = useState('demo123');
-  const [employeeSearch, setEmployeeSearch] = useState('');
-  const [directoryAccounts, setDirectoryAccounts] = useState<DirectoryDemoAccount[]>(
-    CORE_FALLBACK_ACCOUNTS,
-  );
-  const [loadingDirectory, setLoadingDirectory] = useState(true);
-  const [directoryWarning, setDirectoryWarning] = useState(false);
 
-  const loadDirectory = useCallback(async () => {
-    setLoadingDirectory(true);
-    setDirectoryWarning(false);
+  const [email, setEmail] = useState(INSTANT_ROLES[0].email);
+  const [password, setPassword] = useState('demo123');
+  const [activeInstantEmail, setActiveInstantEmail] = useState<string | null>(null);
+  const [backendIssue, setBackendIssue] = useState<'none' | 'proxy_redirect' | 'api_404' | 'network'>('none');
+
+  const checkBackendHealth = useCallback(async () => {
+    setBackendIssue('none');
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetch('/api/auth/demo-accounts', {
+      const response = await fetch('/api/health', {
         cache: 'no-store',
         credentials: 'same-origin',
         redirect: 'manual',
         signal: controller.signal,
       });
-      const contentType = response.headers.get('content-type') || '';
       if (
         response.type === 'opaqueredirect' ||
-        !response.ok ||
-        !contentType.includes('application/json')
+        response.status === 301 ||
+        response.status === 302 ||
+        response.status === 307 ||
+        response.status === 308
       ) {
-        throw new Error(`HTTP ${response.status}`);
+        setBackendIssue('proxy_redirect');
+        return;
       }
-      const data = await response.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setDirectoryAccounts(data);
-      } else {
-        setDirectoryAccounts(CORE_FALLBACK_ACCOUNTS);
+      const contentType = response.headers.get('content-type') || '';
+      if (response.status === 404 || !contentType.includes('application/json')) {
+        setBackendIssue('api_404');
+        return;
+      }
+      if (!response.ok) {
+        setBackendIssue('network');
       }
     } catch {
-      setDirectoryWarning(true);
-      setDirectoryAccounts((prev) => (prev.length > 0 ? prev : CORE_FALLBACK_ACCOUNTS));
+      setBackendIssue('network');
     } finally {
       clearTimeout(timeoutId);
-      setLoadingDirectory(false);
     }
   }, []);
 
   useEffect(() => {
-    loadDirectory();
-  }, [loadDirectory]);
+    void checkBackendHealth();
+  }, [checkBackendHealth]);
 
-  const filteredDirectory = useMemo(() => {
-    const q = employeeSearch.trim().toLowerCase();
-    if (!q) return directoryAccounts;
-    return directoryAccounts.filter(
-      (emp) =>
-        emp.fullName.toLowerCase().includes(q) ||
-        emp.employeeCode.toLowerCase().includes(q) ||
-        emp.email.toLowerCase().includes(q) ||
-        emp.jobTitle.toLowerCase().includes(q),
-    );
-  }, [directoryAccounts, employeeSearch]);
-
-  const selectedAccount = useMemo(
-    () =>
-      directoryAccounts.find((a) => a.email.toLowerCase() === email.trim().toLowerCase()) ?? null,
-    [directoryAccounts, email],
-  );
-
-  const selectedDirectoryEmail = selectedAccount ? selectedAccount.email : '';
+  const handleInstantLogin = async (roleOpt: RoleQuickOption) => {
+    if (submitting) return;
+    clearAuthError();
+    setEmail(roleOpt.email);
+    setPassword('demo123');
+    setActiveInstantEmail(roleOpt.email);
+    try {
+      await signInWithDemo(roleOpt.email, 'demo123');
+    } finally {
+      setActiveInstantEmail(null);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+    setActiveInstantEmail(null);
     await signInWithDemo(email.trim().toLowerCase(), password);
   };
 
@@ -181,8 +118,8 @@ export const LoginView: React.FC = () => {
             : 'w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs'
         }
       >
-        <div className="max-w-md w-full mx-auto space-y-5">
-          {/* Centered Logo & Brand Header */}
+        <div className="max-w-md w-full mx-auto space-y-6">
+          {/* Brand Header */}
           <div className="flex flex-col items-center text-center">
             <img
               src="/icon.svg"
@@ -193,169 +130,133 @@ export const LoginView: React.FC = () => {
               KaryaFlow HRM
             </h1>
             <p className="mt-1 text-xs text-slate-500">
-              Portal HR Enterprise & Presensi Karyawan
+              Portal HR Enterprise &amp; Presensi Karyawan
             </p>
           </div>
 
           {/* Desktop / Mobile View Mode Toggle */}
           <ViewModeToggle mode={viewMode} onChange={setViewMode} fullWidth />
 
-          {/* 4 Concise Role Buttons + Search + Employee Directory Dropdown */}
-          <div className="space-y-3">
-            <div>
-              <p className="text-xs font-medium text-slate-600 mb-2">
-                Pilih Peran Cepat
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {ROLE_BUTTONS.map((roleOpt) => {
-                  const selected = email.trim().toLowerCase() === roleOpt.email;
-                  return (
-                    <button
-                      key={roleOpt.email}
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => {
-                        clearAuthError();
-                        setEmail(roleOpt.email);
-                        setPassword('demo123');
-                      }}
-                      className={`min-h-[40px] px-2.5 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap disabled:opacity-60 ${
-                        selected
-                          ? 'border-blue-700 bg-blue-50 text-blue-700'
-                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      {roleOpt.label}
-                    </button>
-                  );
-                })}
+          {/* Backend Health Recovery Banner (only shown if /api/health fails) */}
+          {backendIssue !== 'none' && !authError && (
+            <div
+              role="status"
+              className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900 space-y-2"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  {backendIssue === 'proxy_redirect'
+                    ? 'Sesi akses halaman perlu disegarkan agar terhubung ke server.'
+                    : backendIssue === 'api_404'
+                      ? 'Server API belum aktif di tautan ini (404). Jika membuka Shared App URL, terbitkan ulang lewat tombol Share App lalu bersihkan cache.'
+                      : 'Koneksi ke server sedang terganggu. Coba muat ulang halaman.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void clearAppCacheAndReload();
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100/70 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3 shrink-0" />
+                  <span>Muat Ulang &amp; Bersihkan Cache</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void checkBackendHealth();
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-900 hover:underline px-1.5 py-1 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <span>Coba Lagi</span>
+                </button>
               </div>
             </div>
+          )}
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <label
-                  htmlFor="demo-employee-select"
-                  className="block text-xs font-medium text-slate-600"
-                >
-                  Pilih Karyawan ({filteredDirectory.length})
-                </label>
-                {directoryWarning && (
+          {/* One-Click Instant Role Access */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-700">
+                Masuk Instan Sesuai Peran
+              </span>
+              <span className="text-[11px] text-slate-500">
+                Klik untuk langsung masuk
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              {INSTANT_ROLES.map((roleOpt) => {
+                const isBusyThis = submitting && activeInstantEmail === roleOpt.email;
+                const isSelected = email.trim().toLowerCase() === roleOpt.email;
+                return (
                   <button
+                    key={roleOpt.email}
                     type="button"
-                    onClick={loadDirectory}
-                    disabled={loadingDirectory}
-                    className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:underline cursor-pointer"
+                    disabled={submitting}
+                    onClick={() => {
+                      void handleInstantLogin(roleOpt);
+                    }}
+                    className={`min-h-[58px] rounded-xl border px-3.5 py-2.5 text-left transition-colors cursor-pointer disabled:opacity-60 flex items-center justify-between gap-2 ${
+                      isBusyThis || isSelected
+                        ? 'border-blue-700 bg-blue-50/70 text-slate-900'
+                        : 'border-slate-200 bg-slate-50/70 text-slate-900 hover:border-blue-300 hover:bg-blue-50/40'
+                    }`}
                   >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>Muat Ulang</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-900 truncate">
+                        {isBusyThis ? 'Masuk...' : roleOpt.label}
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                        {roleOpt.subtitle}
+                      </p>
+                    </div>
+                    <ArrowRight className="w-3.5 h-3.5 text-blue-700 shrink-0" />
                   </button>
-                )}
-              </div>
-
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={employeeSearch}
-                  onChange={(e) => {
-                    const nextQ = e.target.value;
-                    setEmployeeSearch(nextQ);
-                    const qLower = nextQ.trim().toLowerCase();
-                    if (qLower) {
-                      const matches = directoryAccounts.filter(
-                        (emp) =>
-                          emp.fullName.toLowerCase().includes(qLower) ||
-                          emp.employeeCode.toLowerCase().includes(qLower) ||
-                          emp.email.toLowerCase().includes(qLower) ||
-                          emp.jobTitle.toLowerCase().includes(qLower),
-                      );
-                      if (matches.length === 1) {
-                        clearAuthError();
-                        setEmail(matches[0].email);
-                        setPassword('demo123');
-                      }
-                    }
-                  }}
-                  placeholder="Cari nama, NIP, atau jabatan..."
-                  aria-label="Cari karyawan"
-                  className="w-full min-h-[38px] pl-8 pr-3 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
-                />
-              </div>
-
-              <select
-                id="demo-employee-select"
-                value={selectedDirectoryEmail}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    clearAuthError();
-                    setEmail(e.target.value);
-                    setPassword('demo123');
-                  }
-                }}
-                className="w-full min-h-[42px] rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
-              >
-                <option value="">
-                  {filteredDirectory.length === 0
-                    ? '— Tidak ada karyawan yang cocok —'
-                    : '— Pilih karyawan dari daftar —'}
-                </option>
-                {filteredDirectory.map((emp) => (
-                  <option key={emp.id} value={emp.email}>
-                    {emp.employeeCode} — {emp.fullName} ({getRoleLabel(emp.role)})
-                  </option>
-                ))}
-              </select>
-
-              {selectedAccount && (
-                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                  <Avatar
-                    name={selectedAccount.fullName}
-                    src={selectedAccount.avatarUrl}
-                    size="sm"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-slate-900 truncate">
-                      {selectedAccount.fullName}
-                    </p>
-                    <p className="text-[11px] text-slate-500 truncate">
-                      {selectedAccount.employeeCode} · {selectedAccount.jobTitle}
-                    </p>
-                  </div>
-                  <span className="text-[11px] font-medium text-blue-700 shrink-0">
-                    {getRoleLabel(selectedAccount.role)}
-                  </span>
-                </div>
-              )}
+                );
+              })}
             </div>
           </div>
 
-          {/* Simplified Login Form */}
-          <form onSubmit={handleSubmit} className="space-y-3.5">
-            {authError && (
-              <div
-                role="alert"
-                className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-800 space-y-2.5"
-              >
-                <p>{authError}</p>
-                {authNeedsCacheRecovery && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void clearAppCacheAndReload();
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-100/60 transition-colors whitespace-nowrap cursor-pointer"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5 shrink-0" />
-                    <span>Muat Ulang & Bersihkan Cache</span>
-                  </button>
-                )}
-              </div>
-            )}
+          {/* Auth Error Feedback */}
+          {authError && (
+            <div
+              role="alert"
+              className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-800 space-y-2.5"
+            >
+              <p>{authError}</p>
+              {authNeedsCacheRecovery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void clearAppCacheAndReload();
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-100/60 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                  <span>Muat Ulang &amp; Bersihkan Cache</span>
+                </button>
+              )}
+            </div>
+          )}
 
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap">
+              Atau masuk manual
+            </span>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+
+          {/* Minimal Manual Email & Password Form */}
+          <form onSubmit={handleSubmit} className="space-y-3">
             <div>
               <label htmlFor="demo-email" className="block text-xs font-medium text-slate-700 mb-1">
-                Email Akun
+                Email
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -368,7 +269,8 @@ export const LoginView: React.FC = () => {
                     clearAuthError();
                     setEmail(e.target.value);
                   }}
-                  className="w-full min-h-[44px] pl-10 pr-3.5 rounded-xl border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  placeholder="nama@karyaflow.id"
+                  className="w-full min-h-[44px] pl-10 pr-3.5 rounded-xl border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600"
                 />
               </div>
             </div>
@@ -376,7 +278,7 @@ export const LoginView: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label htmlFor="demo-password" className="block text-xs font-medium text-slate-700">
-                  Kata Sandi Demo
+                  Kata Sandi
                 </label>
                 <span className="font-mono text-[11px] text-slate-500">demo123</span>
               </div>
@@ -399,9 +301,9 @@ export const LoginView: React.FC = () => {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-800 disabled:opacity-60 cursor-pointer"
+              className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-800 disabled:opacity-60 whitespace-nowrap cursor-pointer"
             >
-              <span>{submitting ? 'Memproses...' : 'Masuk'}</span>
+              <span>{submitting && !activeInstantEmail ? 'Memproses...' : 'Masuk'}</span>
               <ArrowRight className="w-4 h-4 shrink-0" />
             </button>
           </form>

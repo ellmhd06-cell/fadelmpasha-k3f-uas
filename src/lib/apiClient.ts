@@ -139,7 +139,7 @@ export async function apiRequest<T>(
       const backendOk = path !== '/health' ? await isApiBackendReachable() : false;
       const recoveryMsg = backendOk
         ? 'Rute login tidak cocok dengan cache browser. Klik "Muat Ulang & Bersihkan Cache" lalu coba masuk kembali.'
-        : 'Layanan autentikasi belum merespons di rute ini (404). Jika Anda membuka Shared App URL, klik "Muat Ulang & Bersihkan Cache" atau buka lewat Pratinjau Aplikasi utama.';
+        : 'Server API belum merespons di tautan ini (404). Jika Anda membuka Shared App URL, pastikan versi terbaru sudah diterbitkan ulang melalui tombol Share App (bukan hanya sync GitHub), lalu klik "Muat Ulang & Bersihkan Cache".';
       throw new ApiError(recoveryMsg, response.status, true);
     }
 

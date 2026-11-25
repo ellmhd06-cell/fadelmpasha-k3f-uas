@@ -253,7 +253,10 @@ function buildPermissions(role: string) {
 export const apiRouter = Router();
 
 apiRouter.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  res.json({
+    status: 'ok',
+    env: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+  });
 });
 
 // Public Demo Account Directory (lists existing + newly added employees for demo login)

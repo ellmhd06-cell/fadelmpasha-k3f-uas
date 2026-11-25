@@ -27,6 +27,7 @@ export async function clearAppCacheAndReload(): Promise<void> {
 
   try {
     window.sessionStorage.removeItem('karyaflow_demo_session_token');
+    window.sessionStorage.removeItem('karyaflow_preload_recovered');
   } catch {
     // Ignore storage cleanup errors
   }
